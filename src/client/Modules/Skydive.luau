@@ -5,10 +5,26 @@ local C, Net, S, cam = Core.C, Core.Net, Core.S, Core.cam
 
 local Skydive = {}
 
-local Controls
-pcall(function()
-	Controls = require(Core.plr:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule") :: any):GetControls()
-end)
+-- Roblox's control module, looked up without ever waiting (some Studio setups don't have it)
+local Controls = nil
+local controlsLoaded = false
+local function getControls()
+	if controlsLoaded then
+		return Controls
+	end
+	local ps = Core.plr:FindFirstChild("PlayerScripts")
+	local pm = ps and ps:FindFirstChild("PlayerModule")
+	if pm and pm:IsA("ModuleScript") then
+		controlsLoaded = true
+		local ok, res = pcall(function()
+			return (require(pm) :: any):GetControls()
+		end)
+		if ok then
+			Controls = res
+		end
+	end
+	return Controls
+end
 
 function Skydive.groundDist(hrp: BasePart): number
 	local r = workspace:Raycast(hrp.Position, Vector3.new(0, -3000, 0), Core.rayParams())
@@ -37,10 +53,14 @@ function Skydive.update(): boolean
 	local fwd = Vector3.new(look.X, 0, look.Z)
 	fwd = fwd.Magnitude > 0.01 and fwd.Unit or Vector3.new(0, 0, -1)
 	local right = Vector3.new(-fwd.Z, 0, fwd.X)
-	local mv = Vector3.zero
-	if Controls then
-		local v = Controls:GetMoveVector()
+	local mv
+	local controls = getControls()
+	if controls then
+		local v = controls:GetMoveVector()
 		mv = right * v.X + fwd * -v.Z
+	else
+		-- fallback: the direction your movement keys/thumbstick are pushing
+		mv = Vector3.new(hum.MoveDirection.X, 0, hum.MoveDirection.Z)
 	end
 	local h = Skydive.groundDist(hrp)
 	local vel, pitch
