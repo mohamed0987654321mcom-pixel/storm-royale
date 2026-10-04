@@ -75,7 +75,7 @@ Then open `StormRoyale.rbxlx` in Studio.
 
 ## Studio settings (once per place)
 
-- **Game Settings → Avatar** → R15 (the project already sets this; double-check it if your avatar spawns blocky)
+- **Game Settings → Avatar** → R15
 - **Game Settings → Security** → Enable Studio Access to API Services (so coins and stats save)
 
 ## Editor (optional, recommended)

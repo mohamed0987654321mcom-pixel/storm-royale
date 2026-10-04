@@ -13,9 +13,6 @@
       }
     },
     "StarterPlayer": {
-      "$properties": {
-        "GameSettingsAvatar": "R15"
-      },
       "StarterPlayerScripts": {
         "Client": {
           "$path": "src/client"
