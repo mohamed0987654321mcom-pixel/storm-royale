@@ -81,3 +81,30 @@ Then open `StormRoyale.rbxlx` in Studio.
 ## Editor (optional, recommended)
 
 VS Code will suggest the **Rojo** and **Luau LSP** extensions. Luau LSP gives autocomplete and type checking for the Roblox API; it reads `default.project.json` to understand `require` paths.
+
+## Website (`web/`)
+
+Party, chat and voice site for players, deployed on Railway at **stormroyale.mparadiseplatrforms.com**.
+
+- Node.js + Express + Socket.io, Postgres on Railway (in-memory when run locally)
+- Email sign-in links (Resend), 13+ only, teen and adult lobbies kept separate
+- Parties of 4 with party chat + party voice; open lobby rooms when you're not in a party
+- Voice: WebRTC between players; your browser turns your speech into text for the AI safety check
+- Moderation: Claude Haiku 4.5 checks every chat message, name and voice transcript; strikes, mutes, reports, admin page at `/admin`
+- Game link: players link Roblox by putting a code in their Roblox profile About; the game uses a secret API key (`x-api-key`) to show website parties + filtered party chat in the lobby and to send match stats
+
+Run locally: `cd web && npm install && DEV_SHOW_LINK=1 npm start` → http://localhost:3000 (sign-in links print in the terminal). Tests: `npm test`.
+
+| Railway variable | What it's for |
+| --- | --- |
+| `DATABASE_URL` | Postgres (set automatically from the Postgres service) |
+| `JWT_SECRET` | signs session cookies |
+| `GAME_API_KEY` | the game server's key (also goes in Studio: ServerStorage → StringValue `StormRoyaleApiKey`) |
+| `ANTHROPIC_API_KEY` | Claude moderation. Chat and voice stay off on the live site until this is set |
+| `RESEND_API_KEY`, `EMAIL_FROM` | sign-in emails, e.g. `Storm Royale <no-reply@mparadiseplatrforms.com>` |
+| `ADMIN_EMAILS` | comma-separated emails that can open `/admin` |
+| `TURN_URL`, `TURN_USERNAME`, `TURN_PASSWORD` | optional relay for players whose network blocks direct voice |
+
+### Game setup for the website link
+1. Studio → Game Settings → Security → **Allow HTTP Requests** on
+2. ServerStorage → add a **StringValue** named `StormRoyaleApiKey`, paste the `GAME_API_KEY` as its Value (never commit it)

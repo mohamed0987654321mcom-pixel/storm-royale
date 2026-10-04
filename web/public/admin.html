@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Storm Royale · Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Nunito:wght@600;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+  <header class="top">
+    <a class="logo home" href="/">STORM ROYALE</a>
+    <span class="pill tag">ADMIN</span>
+    <span class="muted live" id="live"></span>
+  </header>
+  <main class="admin">
+    <div class="panel-head">
+      <h2>REPORTS</h2>
+      <div class="room-pick">
+        <button class="active" data-status="open">OPEN</button>
+        <button data-status="closed">CLOSED</button>
+      </div>
+    </div>
+    <p class="muted" id="empty" hidden>No reports here. 🎉</p>
+    <div id="reports" class="reports"></div>
+  </main>
+  <div class="toasts" id="toasts"></div>
+  <script src="/admin.js"></script>
+</body>
+</html>

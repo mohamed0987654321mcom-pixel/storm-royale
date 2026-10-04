@@ -6,6 +6,7 @@ local Core = require(script.Parent.Core)
 local Inventory = require(script.Parent.Inventory)
 local Loot = require(script.Parent.Loot)
 local Cosmetics = require(script.Parent.Cosmetics)
+local WebLink = require(script.Parent.WebLink)
 local C, Net = Core.C, Core.Net
 
 local Eliminations = {}
@@ -61,6 +62,7 @@ function Eliminations.onEliminated(o, char: Model)
 		Core.addStat(o.Player, "Matches", 1)
 		Core.addStat(o.Player, "Coins", C.Coins.Match)
 		Net:FireClient(o.Player, "Placement", placement, o.Kills or 0, killer and killer.Name or "")
+		WebLink.reportMatch(o.Player, o.Kills or 0, placement, false)
 		Core.saveData(o.Player)
 	end
 	Core.updateAlive()

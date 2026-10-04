@@ -165,6 +165,45 @@ plr:GetAttributeChangedSignal("Data"):Connect(onData)
 onData()
 showTab("LOBBY")
 
+-- PARTY panel (filled by the server's WebLink when this player is in a party)
+local partyBox = new("Frame", { Size = UDim2.new(0, 300, 0, 250), Position = UDim2.new(0, 30, 1, -370), BackgroundColor3 = Color3.fromRGB(10, 20, 60), BackgroundTransparency = 0.25, Visible = false }, Pages.LOBBY)
+corner(partyBox, 8)
+stroke(partyBox, Color3.fromRGB(60, 110, 230), 2)
+text(partyBox, "PARTY", UDim2.new(1, -20, 0, 30), UDim2.new(0, 12, 0, 6), FONT_H, 24, YELLOW, Enum.TextXAlignment.Left)
+local partyRows = new("Frame", { Size = UDim2.new(1, -24, 0, 104), Position = UDim2.new(0, 12, 0, 38), BackgroundTransparency = 1 }, partyBox)
+new("UIListLayout", { Padding = UDim.new(0, 2) }, partyRows)
+local partyChat = new("Frame", { Size = UDim2.new(1, -24, 0, 98), Position = UDim2.new(0, 12, 0, 146), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0.6, ClipsDescendants = true }, partyBox)
+corner(partyChat, 6)
+new("UIListLayout", { Padding = UDim.new(0, 1), VerticalAlignment = Enum.VerticalAlignment.Bottom }, partyChat)
+new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 4) }, partyChat)
+
+function Lobby.setWebParty(data)
+	local members = data and data.Members
+	if type(members) ~= "table" or #members == 0 then
+		partyBox.Visible = false
+		return
+	end
+	partyBox.Visible = true
+	partyRows:ClearAllChildren()
+	new("UIListLayout", { Padding = UDim.new(0, 2) }, partyRows)
+	for _, m in members do
+		local label = (m.Leader and "👑 " or "") .. tostring(m.Name) .. (m.Here and "  (here)" or "")
+		local row = new("Frame", { Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1 }, partyRows)
+		text(row, label, UDim2.new(0.6, 0, 1, 0), UDim2.new(), FONT_B, 15, WHITE, Enum.TextXAlignment.Left).TextTruncate = Enum.TextTruncate.AtEnd
+		local st = (m.Ready and "✅ " or "") .. tostring(m.Status)
+		text(row, st, UDim2.new(0.4, 0, 1, 0), UDim2.new(0.6, 0, 0, 0), FONT_M, 12, Color3.fromRGB(170, 200, 255), Enum.TextXAlignment.Right)
+	end
+	partyChat:ClearAllChildren()
+	new("UIListLayout", { Padding = UDim.new(0, 1), VerticalAlignment = Enum.VerticalAlignment.Bottom }, partyChat)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 4) }, partyChat)
+	local chat = data.Chat or {}
+	for i = math.max(1, #chat - 4), #chat do
+		local c = chat[i]
+		local l = text(partyChat, tostring(c.Name) .. ": " .. tostring(c.Text), UDim2.new(1, 0, 0, 18), UDim2.new(), FONT_M, 13, WHITE, Enum.TextXAlignment.Left)
+		l.TextTruncate = Enum.TextTruncate.AtEnd
+	end
+end
+
 -- client-only backdrop behind your character on the lobby stage
 local Showcase = new("Folder", { Name = "LobbyBackdrop" }, workspace)
 Lobby.Showcase = Showcase

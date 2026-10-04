@@ -52,6 +52,8 @@ local function onServer(action: string, ...)
 		Hud.endPanel("#1 VICTORY!", a[1] .. " eliminations   •   +" .. (C.Coins.Win + C.Coins.Match + a[1] * C.Coins.Kill) .. " coins", YELLOW)
 	elseif action == "Winner" then
 		Hud.addFeed("🏆 " .. a[1] .. " won the match!", YELLOW)
+	elseif action == "WebParty" then
+		Lobby.setWebParty(a[1])
 	end
 end
 

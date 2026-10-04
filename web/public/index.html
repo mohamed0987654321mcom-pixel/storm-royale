@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Storm Royale · Party & Voice</title>
+  <meta name="description" content="Party up, chat and voice chat with other Storm Royale players.">
+  <meta name="theme-color" content="#0b1640">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Nunito:wght@600;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="logo">STORM ROYALE</div>
+    <nav class="tabs" id="tabs" hidden>
+      <button class="tab active" data-view="party">PARTY</button>
+      <button class="tab" data-view="chat">CHAT</button>
+      <button class="tab" data-view="voice">VOICE</button>
+    </nav>
+    <button class="me-chip" id="meChip" hidden></button>
+  </header>
+
+  <!-- signed out -->
+  <main id="signedOut" class="landing" hidden>
+    <section class="hero">
+      <h1>PARTY UP.<br>CHAT.<br><span>TALK.</span></h1>
+      <p>Squad up with other Storm Royale players, chat in the lobby and jump into voice with your party.</p>
+      <ul class="perks">
+        <li>🎉 Parties of up to 4 that show up in the game</li>
+        <li>💬 Lobby chat and party chat</li>
+        <li>🎙️ Voice rooms, moderated by AI to keep it safe</li>
+      </ul>
+    </section>
+    <section class="card signin">
+      <h2 id="signinTitle">SIGN IN</h2>
+      <p class="muted" id="signinSub">Use your MPARADISE email. New here? We'll create your account.</p>
+      <form id="signinForm" autocomplete="on">
+        <label>Email<input type="email" id="email" required placeholder="you@example.com" autocomplete="email"></label>
+        <div id="signupFields" hidden>
+          <label>Display name<input id="name" maxlength="20" placeholder="StormKing_07" autocomplete="nickname"></label>
+          <label>Birth date<input type="date" id="birth"></label>
+          <label class="check"><input type="checkbox" id="rules"> I'm 13 or older and I accept the <a href="#rules" id="rulesLink">community rules</a>, including AI safety checks on chat and voice.</label>
+        </div>
+        <button class="btn yellow big" type="submit" id="signinBtn">CONTINUE</button>
+      </form>
+      <div id="checkEmail" hidden class="sent">
+        <div class="mail">✉️</div>
+        <h3>CHECK YOUR EMAIL</h3>
+        <p class="muted">We sent a sign-in link to <b id="sentTo"></b>. It works for 15 minutes.</p>
+        <a id="devLink" class="btn" hidden>Open sign-in link (dev)</a>
+        <button class="btn ghost" id="backBtn" type="button">Use a different email</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- signed in -->
+  <main id="app" class="app" hidden>
+    <!-- PARTY -->
+    <section class="panel party view-party" id="partyPanel">
+      <div class="panel-head">
+        <h2>PARTY</h2>
+        <span class="pill" id="partyCodePill" hidden title="Share this code so friends can join"></span>
+      </div>
+      <div class="slots" id="slots"></div>
+      <div class="party-actions" id="partyNone">
+        <button class="btn yellow" id="createParty">CREATE PARTY</button>
+        <form class="inline" id="joinForm"><input id="joinCode" maxlength="6" placeholder="CODE" autocomplete="off"><button class="btn">JOIN</button></form>
+      </div>
+      <div class="party-actions" id="partyIn" hidden>
+        <form class="inline" id="inviteForm"><input id="inviteName" maxlength="20" placeholder="Invite by name" autocomplete="off"><button class="btn">INVITE</button></form>
+        <div class="row">
+          <button class="btn yellow" id="readyBtn">READY UP</button>
+          <button class="btn danger" id="leaveParty">LEAVE</button>
+        </div>
+      </div>
+      <p class="hint" id="partyHint">In a party, chat and voice switch to just your squad.</p>
+    </section>
+
+    <!-- CHAT -->
+    <section class="panel chat view-chat" id="chatPanel">
+      <div class="panel-head">
+        <h2 id="roomTitle">LOBBY</h2>
+        <div class="room-pick" id="roomPick"></div>
+      </div>
+      <div class="messages" id="messages" aria-live="polite"></div>
+      <form class="composer" id="chatForm">
+        <input id="chatInput" maxlength="200" placeholder="Say something nice…" autocomplete="off">
+        <button class="btn yellow" id="sendBtn">SEND</button>
+      </form>
+      <p class="hint">Messages are checked by an AI moderator before anyone sees them. No links, phone numbers or personal info.</p>
+    </section>
+
+    <!-- VOICE -->
+    <section class="panel voice view-voice" id="voicePanel">
+      <div class="panel-head">
+        <h2>VOICE</h2>
+        <span class="pill" id="voiceCount">0/10</span>
+      </div>
+      <div class="voice-controls">
+        <button class="btn yellow big" id="voiceBtn">🎙️ JOIN VOICE</button>
+        <button class="btn" id="micBtn" hidden>MIC ON</button>
+      </div>
+      <p class="hint" id="voiceHint">Voice is checked for safety: your browser turns speech into text and an AI moderator reads it. Audio is never recorded.</p>
+      <h3 class="sub">IN THIS ROOM</h3>
+      <ul class="members" id="members"></ul>
+    </section>
+  </main>
+
+  <!-- profile -->
+  <dialog id="profile" class="card modal">
+    <button class="close" data-close>✕</button>
+    <h2 id="pName">PROFILE</h2>
+    <p class="muted" id="pEmail"></p>
+    <div class="stats" id="pStats"></div>
+    <h3 class="sub">ROBLOX ACCOUNT</h3>
+    <div id="robloxLinked" hidden>
+      <p>Linked to <b id="robloxName"></b>. Your party shows up in Storm Royale's lobby.</p>
+      <button class="btn ghost" id="unlinkRoblox">UNLINK</button>
+    </div>
+    <div id="robloxStart">
+      <form class="inline" id="robloxForm"><input id="robloxUser" maxlength="20" placeholder="Roblox username"><button class="btn">LINK</button></form>
+    </div>
+    <div id="robloxVerify" hidden>
+      <ol class="steps">
+        <li>On Roblox, open your profile and edit <b>About</b>.</li>
+        <li>Paste this code anywhere in it: <code id="robloxCode"></code> <button class="btn tiny" id="copyCode" type="button">COPY</button></li>
+        <li>Save, then press verify. You can remove the code afterwards.</li>
+      </ol>
+      <button class="btn yellow" id="verifyRoblox">VERIFY</button>
+    </div>
+    <h3 class="sub">BLOCKED PLAYERS</h3>
+    <ul class="blocked" id="blockedList"></ul>
+    <div class="row end">
+      <a class="btn ghost" href="/admin" id="adminLink" hidden>ADMIN</a>
+      <button class="btn danger" id="logout">SIGN OUT</button>
+    </div>
+  </dialog>
+
+  <!-- rules -->
+  <dialog id="rulesModal" class="card modal">
+    <button class="close" data-close>✕</button>
+    <h2>COMMUNITY RULES</h2>
+    <ol class="rules">
+      <li>Be kind. No bullying, hate or harassment.</li>
+      <li>Nothing sexual, ever.</li>
+      <li>Never share or ask for personal info: real name, age, school, address, phone, socials or other apps.</li>
+      <li>No links, scams, "free Robux" or account trading.</li>
+      <li>If someone makes you uncomfortable: block them, report them, and tell a parent or adult you trust.</li>
+    </ol>
+    <p class="muted">Chat and voice are checked by an AI moderator (Claude). Your browser turns your speech into text for this; audio is never recorded. Breaking rules gets you muted or banned. Open lobbies are split into teen (13–17) and adult (18+) rooms.</p>
+  </dialog>
+
+  <!-- small popup menu for a player -->
+  <div class="menu" id="playerMenu" hidden></div>
+  <div class="toasts" id="toasts"></div>
+  <div id="audioSink" hidden></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/voice.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -101,6 +101,11 @@ C.Gliders = {
 
 C.Coins = { Kill = 25, Win = 100, Match = 10 }
 
+-- Website link (parties + party chat in the lobby, stats). The API key is NOT stored here:
+-- put it in ServerStorage as a StringValue named "StormRoyaleApiKey" so it never goes to GitHub.
+C.WEB_URL = "https://stormroyale.mparadiseplatrforms.com"
+C.WEB_SYNC = 10 -- seconds between syncs
+
 -- Build piece geometry (shared so the client preview matches the server exactly)
 -- returns key, { {CFrame, Size, isWedge}, ... }
 function C.Piece(kind: string, cx: number, ly: number, cz: number, dir: number)

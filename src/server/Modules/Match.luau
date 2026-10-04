@@ -12,6 +12,7 @@ local Bots = require(script.Parent.Bots)
 local SkyBus = require(script.Parent.SkyBus)
 local Storm = require(script.Parent.Storm)
 local PlayerFlow = require(script.Parent.PlayerFlow)
+local WebLink = require(script.Parent.WebLink)
 local C, Net, State = Core.C, Core.Net, Core.State
 
 local MatchFlow = {}
@@ -81,6 +82,7 @@ local function runMatch()
 			Core.addStat(wp, "Matches", 1)
 			Core.addStat(wp, "Coins", C.Coins.Win + C.Coins.Match)
 			Net:FireClient(wp, "Victory", winner.Kills or 0)
+			WebLink.reportMatch(wp, winner.Kills or 0, 1, true)
 			Core.saveData(wp)
 		end
 	end

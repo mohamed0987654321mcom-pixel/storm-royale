@@ -1,0 +1,15 @@
+.admin { max-width: 980px; margin: 0 auto; padding: 20px; }
+.reports { display: grid; gap: 12px; }
+.report { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.report.ai { border-left: 4px solid var(--purple); }
+.report.user { border-left: 4px solid var(--yellow); }
+.report .head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+.report .who { font-family: var(--head); font-size: 20px; color: var(--yellow); }
+.report .reason { margin: 6px 0 10px; }
+.report .ctx { background: rgba(0, 0, 0, 0.3); border-radius: 8px; padding: 8px 10px; font-size: 13.5px; display: grid; gap: 3px; max-height: 220px; overflow-y: auto; }
+.report .ctx .blocked { color: #ff8da1; }
+.report .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.report .actions .btn { font-size: 14px; padding: 8px 12px; }
+.logo.home { text-decoration: none; }
+.pill.tag { margin-left: 12px; cursor: default; }
+.live { margin-left: auto; }

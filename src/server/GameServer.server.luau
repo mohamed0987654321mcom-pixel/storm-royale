@@ -13,6 +13,7 @@
 --   PlayerFlow    joining, lobby, warm-up island
 --   Match         countdown → bus → storm → winner
 --   Remotes       client requests
+--   WebLink       website parties, party chat, stats (needs HTTP + API key, see the file)
 
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
@@ -28,6 +29,7 @@ local PlayerFlow = require(Modules.PlayerFlow)
 local Match = require(Modules.Match)
 local Remotes = require(Modules.Remotes)
 local Storm = require(Modules.Storm)
+local WebLink = require(Modules.WebLink)
 
 -- an empty "Health" script turns off Roblox's default health regen
 do
@@ -74,5 +76,6 @@ World.buildMap()
 Loot.resetLoot()
 Storm.reset()
 PlayerFlow.start()
+WebLink.start()
 Bots.startLoop()
 Match.startLoop()
