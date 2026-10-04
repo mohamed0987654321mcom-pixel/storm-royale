@@ -1,0 +1,5 @@
+# Tools managed by Rokit (https://github.com/rojo-rbx/rokit)
+# Run `rokit install` in this folder to get them.
+
+[tools]
+rojo = "rojo-rbx/rojo@7.7.1"
