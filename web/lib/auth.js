@@ -153,7 +153,7 @@ function sendLoginEmail(email, link, isNew) {
 function sendParentConsentEmail(parentEmail, kidName, link) {
   const html = shell(`
     <p style="font-size:16px">Your child signed up for <b>Storm Royale</b> as <b>${esc(kidName)}</b> and asked for your permission.</p>
-    <p style="font-size:14px;color:#c8d4ff;max-width:460px;margin:0 auto">Storm Royale is a game community for Roblox players. Kids' accounts can only play with friends you approve. Chat and voice stay off unless you turn them on.</p>
+    <p style="font-size:14px;color:#c8d4ff;max-width:460px;margin:0 auto">Storm Royale is a game community for Roblox players. Kids' accounts can only play with friends you approve, and can only send preset quick-chat phrases like "GG!". Typing and voice stay off unless you turn them on.</p>
     ${button(link, 'REVIEW AND DECIDE')}
     <p style="font-size:12px;color:#9fb0e0">If you don't respond within 7 days, the account and its email address are deleted.<br>If you don't know about this, you can ignore this email.</p>`);
   return sendEmail(parentEmail, `${kidName} wants to join Storm Royale`, html, 'Parent consent link', link);

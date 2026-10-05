@@ -137,7 +137,7 @@ module.exports = function parentRoutes({ rt, publicUrl }) {
     const kid = await ownKid(email, req.body?.kidId);
     if (!kid) return res.status(404).json({ error: 'Not found' });
     const next = { ...kid.kidSettings };
-    for (const key of ['chat', 'voice']) if (typeof req.body[key] === 'boolean') next[key] = req.body[key];
+    for (const key of ['chat', 'voice', 'quick']) if (typeof req.body[key] === 'boolean') next[key] = req.body[key];
     const turningOn = (next.chat && !kid.kidSettings.chat) || (next.voice && !kid.kidSettings.voice);
     if (turningOn && kid.consent !== 'verified') {
       return res.status(403).json({ error: 'Verify that you are a parent to turn chat or voice on.', needVerify: true });

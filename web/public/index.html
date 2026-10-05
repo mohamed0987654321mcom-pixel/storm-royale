@@ -102,7 +102,11 @@
         <div class="room-pick" id="roomPick"></div>
       </div>
       <div class="messages" id="messages" aria-live="polite"></div>
-      <div class="locked-note" id="chatLocked" hidden>🔒 Chat is off. A parent can turn it on from the parent page.</div>
+      <div class="quick" id="quickBar" hidden>
+        <button class="btn ghost quick-toggle" id="quickToggle" type="button">⚡ QUICK CHAT</button>
+        <div class="quick-grid" id="quickGrid" hidden></div>
+      </div>
+      <div class="locked-note" id="chatLocked" hidden></div>
       <form class="composer" id="chatForm">
         <input id="chatInput" maxlength="200" placeholder="Say something nice…" autocomplete="off">
         <button class="btn yellow" id="sendBtn">SEND</button>
@@ -167,7 +171,7 @@
       <li>No links, scams, "free Robux" or account trading.</li>
       <li>If someone makes you uncomfortable: block them, report them, and tell a parent or adult you trust.</li>
     </ol>
-    <p class="muted">Players under 13 need a parent's permission, only play with friends their parents approved, and only get chat or voice if a parent turns it on. Chat and voice are checked by an AI moderator (Claude). Your browser turns your speech into text for this; audio is never recorded. Breaking rules gets you muted or banned. Teens (13–17) and adults (18+) are kept apart: separate lobbies, and they can never be in the same party.</p>
+    <p class="muted">Players under 13 need a parent's permission, only play with friends their parents approved, use quick chat (preset phrases), and only get typing or voice if a verified parent turns it on. Chat and voice are checked by an AI moderator (Claude). Your browser turns your speech into text for this; audio is never recorded. Breaking rules gets you muted or banned. Teens (13–17) and adults (18+) are kept apart: separate lobbies, and they can never be in the same party.</p>
   </dialog>
 
   <!-- small popup menu for a player -->

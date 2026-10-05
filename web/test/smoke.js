@@ -317,6 +317,24 @@ const ask = (s, ev, payload) => new Promise((res) => s.emit(ev, payload || {}, r
   assert.equal((await ask(K2, 'party:join', { code: kp.code })).ok, true);
   ok('kids party only with approved friends; other kids and adults are kept out');
 
+  K2.inbox.length = 0;
+  assert.equal((await ask(K1, 'chat:quick', { id: 'gg' })).ok, true, 'approved kid can quick chat without verification');
+  assert.equal((await ask(K1, 'chat:quick', { id: 'not-a-phrase' })).ok, false, 'only preset phrases');
+  await wait(150);
+  assert.ok(got(K2, 'chat:msg', (m) => m.quick && m.text.startsWith('GG')), 'friend receives quick chat');
+  assert.ok(lastState(K1).quick.length >= 10);
+  assert.equal(lastState(K1).me.canChat, false);
+  await post('/api/parent/settings', { kidId: k2id, quick: false }, dad);
+  await wait(150);
+  assert.equal((await ask(K2, 'chat:quick', { id: 'hi' })).ok, false);
+  K2.inbox.length = 0;
+  await ask(K1, 'chat:quick', { id: 'follow' });
+  await wait(150);
+  assert.ok(!got(K2, 'chat:msg'), 'no quick chat delivered once the parent switched it off');
+  await post('/api/parent/settings', { kidId: k2id, quick: true }, dad);
+  assert.equal((await ask(C, 'chat:quick', { id: 'hi' })).ok, true, 'everyone can use quick chat');
+  ok('quick chat works for approved kids before verification, and parents can switch it off');
+
   assert.equal((await ask(K1, 'chat:send', { text: 'gg' })).ok, false);
   assert.equal((await ask(K1, 'voice:join')).ok, false);
   const setRes = await post('/api/parent/settings', { kidId: k1id, chat: true }, mom);

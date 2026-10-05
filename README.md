@@ -111,7 +111,8 @@ Run locally: `cd web && npm install && DEV_SHOW_LINK=1 npm start` → http://loc
 ### Kids accounts (under 13)
 - Sign up with a parent's email; the account is locked until the parent approves it on **/parent**
 - No open lobbies: kids only party with friends that **both** kids and **both** parents approved; never with teens or adults
-- Chat and voice are off until a **verified** parent turns them on (verification = Phase 2, Epic KWS); kids without chat don't receive chat either
+- **Quick chat** (preset game phrases) works once a parent approves, with no verification needed, and parents can switch it off
+- Typing and voice are off until a **verified** parent turns them on (verification = Phase 2, Epic KWS); kids only receive the kinds of chat they are allowed
 - Parents can remove friends, switch chat/voice off, and delete the account at any time; unapproved accounts are deleted after 7 days
 
 ### Game setup for the website link

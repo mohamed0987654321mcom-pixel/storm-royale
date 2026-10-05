@@ -154,6 +154,7 @@
     S.rooms = s.rooms;
     S.history = s.history;
     S.room = s.room;
+    S.quick = s.quick || [];
     if (voice.active && voice.roomId !== s.room.id) voice.leave(false);
     voice.setBlocked(S.me.blocked);
     for (const m of s.room.members) S.names.set(m.id, m.name);
@@ -178,10 +179,46 @@
     const groupLabel = { teen: 'TEENS', adult: '18+' }[S.me.ageGroup] || '';
     $('#roomTitle').textContent = p ? 'PARTY CHAT' : S.room.kind === 'solo' ? 'CHAT' : `${S.room.title.toUpperCase()} · ${groupLabel}`;
     $('#roomPick').hidden = p || S.room.kind === 'solo';
-    $('#chatLocked').hidden = S.me.canChat;
-    $('#chatForm').hidden = !S.me.canChat;
+    renderChatMode();
     renderKid();
   }
+
+  // ---------------------------------------------------------------- typing vs quick chat
+  let quickOpen = false;
+  function renderChatMode() {
+    const solo = S.room.kind === 'solo';
+    const typing = S.me.canChat;
+    const quick = S.me.canQuick && S.quick.length > 0 && !solo;
+    $('#chatForm').hidden = !typing;
+    // kids who can't type get the quick chat buttons open all the time
+    const quickOnly = !typing && quick;
+    $('#quickBar').hidden = !quick;
+    $('#quickToggle').hidden = quickOnly;
+    $('#quickGrid').hidden = !(quickOnly || quickOpen);
+    const locked = $('#chatLocked');
+    locked.hidden = typing || (solo && S.me.canQuick);
+    locked.textContent = quickOnly
+      ? '⌨️ Typing is off, so use quick chat! A parent can turn typing on after verifying.'
+      : '🔒 Chat is off. A parent can turn it on from the parent page.';
+    if (quick && !$('#quickGrid').childElementCount) {
+      $('#quickGrid').replaceChildren(
+        ...S.quick.map((p) =>
+          h('button', {
+            class: 'quick-chip',
+            type: 'button',
+            onclick: async () => {
+              const r = await emit('chat:quick', { id: p.id });
+              if (!r.ok && r.reason) toast(r.reason, { bad: true });
+            },
+          }, p.text),
+        ),
+      );
+    }
+  }
+  $('#quickToggle').addEventListener('click', () => {
+    quickOpen = !quickOpen;
+    renderChatMode();
+  });
 
   // ---------------------------------------------------------------- kids accounts
   function renderKid() {
@@ -345,7 +382,7 @@
 
   // ---------------------------------------------------------------- chat
   function msgEl(m) {
-    return h('div', { class: `msg ${m.from.id === S.me.id ? 'mine' : ''}` },
+    return h('div', { class: `msg ${m.from.id === S.me.id ? 'mine' : ''} ${m.quick ? 'quick-msg' : ''}` },
       h('span', { class: 'who', onclick: (e) => showMenu({ id: m.from.id, name: m.from.name }, e) }, m.from.name),
       h('span', {}, m.text),
       h('span', { class: 'time' }, fmtTime(m.ts)),

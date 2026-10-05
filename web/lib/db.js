@@ -78,7 +78,7 @@ function rowToUser(r) {
     stats: r.stats || {},
     parentEmail: r.parent_email || null,
     consent: r.consent || 'none',
-    kidSettings: { chat: false, voice: false, ...(r.kid_settings || {}) },
+    kidSettings: { chat: false, voice: false, quick: true, ...(r.kid_settings || {}) },
     friends: r.friends || [],
     ageVerified: Boolean(r.age_verified),
     createdAt: new Date(r.created_at),
@@ -208,7 +208,7 @@ function memoryStore() {
       if (users.some((u) => u.email === email || u.name.toLowerCase() === name.toLowerCase())) throw Object.assign(new Error('duplicate'), { code: '23505' });
       const u = {
         id: nextUser++, email, name, birthDate, robloxId: null, robloxName: null, strikes: 0, bannedUntil: null, mutedUntil: null,
-        blocked: [], stats: {}, parentEmail, consent, kidSettings: { chat: false, voice: false }, friends: [], ageVerified: false, createdAt: new Date(),
+        blocked: [], stats: {}, parentEmail, consent, kidSettings: { chat: false, voice: false, quick: true }, friends: [], ageVerified: false, createdAt: new Date(),
       };
       users.push(u);
       return copy(u);

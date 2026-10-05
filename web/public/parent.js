@@ -64,10 +64,10 @@
     return h('span', { class: 'status basic' }, 'APPROVED');
   }
 
-  function toggle(kid, key, title, desc) {
+  function toggle(kid, key, title, desc, needsVerify = true) {
     const verified = kid.consent === 'verified';
-    const on = kid.settings[key] === true;
-    const input = h('input', { type: 'checkbox', role: 'switch', 'aria-label': title, checked: on, disabled: !verified && !on });
+    const on = key === 'quick' ? kid.settings.quick !== false : kid.settings[key] === true;
+    const input = h('input', { type: 'checkbox', role: 'switch', 'aria-label': title, checked: on, disabled: needsVerify && !verified && !on });
     input.addEventListener('change', () => act('/api/parent/settings', { kidId: kid.id, [key]: input.checked }, `${title} turned ${input.checked ? 'on' : 'off'}`));
     return h('div', { class: 'toggle' },
       h('div', {}, h('div', { class: 't' }, title), h('div', { class: 'd' }, desc)),
@@ -91,7 +91,7 @@
           h('ul', {},
             h('li', {}, 'They can join parties only with friends that you and the other parent both approve.'),
             h('li', {}, 'No open lobbies, no strangers, and never with teens or adults.'),
-            h('li', {}, 'Chat and voice stay off. You can turn them on later, after verifying you are a parent.'),
+            h('li', {}, 'They can use quick chat: preset game phrases like "GG!" only. Typing and voice stay off until you verify that you are a parent.'),
             h('li', {}, 'We store their display name, birth date, email and your email. You can delete it all any time.'),
           ),
           h('div', { class: 'row' },
@@ -109,13 +109,14 @@
     // chat + voice
     const settings = h('div', { class: 'section' },
       h('h4', {}, 'CHAT AND VOICE'),
+      toggle(kid, 'quick', 'Quick chat', 'Preset game phrases only, like "GG!" and "Follow me!". Nothing can be typed, so nothing personal can be shared.', false),
       toggle(kid, 'chat', 'Text chat', 'Typed messages with approved friends, checked by an AI moderator.'),
       toggle(kid, 'voice', 'Voice chat', 'Talking with approved friends. Speech is turned into text and checked; audio is never recorded.'),
     );
     if (kid.consent !== 'verified') {
       settings.append(
         h('div', { class: 'verify-note' },
-          '🔒 To turn these on, first verify that you are a parent.',
+          '🔒 To turn on typing or voice, first verify that you are a parent.',
           h('button', {
             class: 'btn',
             onclick: async () => {

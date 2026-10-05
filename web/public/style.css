@@ -229,3 +229,15 @@ code { background: rgba(255, 220, 50, 0.15); color: var(--yellow); padding: 2px 
 .friend-list .dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 .friend-list .btn { font-size: 12px; padding: 5px 8px; }
 .locked-note { margin-top: 12px; padding: 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); color: #d8e0ff; text-align: center; }
+
+/* ---------- quick chat */
+.quick { margin-top: 12px; display: grid; gap: 8px; }
+.quick-toggle { justify-self: start; font-size: 14px; padding: 7px 12px; }
+.quick-grid { display: flex; flex-wrap: wrap; gap: 6px; max-height: 132px; overflow-y: auto; }
+.quick-chip {
+  font: inherit; font-weight: 800; font-size: 13.5px; color: var(--text); cursor: pointer;
+  background: rgba(63, 169, 255, 0.16); border: 1px solid rgba(63, 169, 255, 0.45); border-radius: 999px; padding: 7px 12px;
+}
+.quick-chip:hover { background: rgba(63, 169, 255, 0.3); }
+.quick-chip:active { transform: translateY(1px); }
+.msg.quick-msg { background: rgba(63, 169, 255, 0.1); }

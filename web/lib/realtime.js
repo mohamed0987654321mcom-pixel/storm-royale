@@ -4,12 +4,14 @@
 // Age groups (auth.ageGroup): 'kid' (under 13), 'teen' (13-17), 'adult' (18+). They never mix:
 //   • teens and adults have their own open lobbies; parties belong to one age group
 //   • kids have NO open lobbies: they only party with friends that both kids' parents approved
-//   • kids can only chat / use voice if a verified parent turned it on (and only then do they receive chat)
+//   • kids can only type / use voice if a verified parent turned it on (and only then do they receive typed chat)
+//   • quick chat (preset phrases) works for approved kids even before the parent is verified; parents can turn it off
 const crypto = require('crypto');
 const { Server } = require('socket.io');
 const db = require('./db');
 const auth = require('./auth');
 const { moderate, enabled: moderationOn } = require('./moderation');
+const quickchat = require('./quickchat');
 
 // never run chat/voice unmoderated on the live site
 const SAFETY_OFF = !moderationOn && process.env.NODE_ENV === 'production';
@@ -44,6 +46,9 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
   const kidLocked = (o) => isKid(o) && !kidApproved(o);
   const canChat = (o) => !isKid(o) || (o.user.consent === 'verified' && o.user.kidSettings.chat === true);
   const canVoice = (o) => !isKid(o) || (o.user.consent === 'verified' && o.user.kidSettings.voice === true);
+  const canQuick = (o) => !isKid(o) || (kidApproved(o) && o.user.kidSettings.quick !== false);
+  // what this player may see from a room's chat history
+  const visibleHistory = (o, hist) => (canChat(o) ? hist : canQuick(o) ? hist.filter((m) => m.quick) : []);
   const isAdmin = (user) => admins.includes(String(user.email).toLowerCase());
   const isMuted = (user) => Boolean(user.mutedUntil && new Date(user.mutedUntil) > new Date());
   const currentRoom = (o) => (o.partyId ? `party-${o.partyId}` : isKid(o) ? `solo-${o.user.id}` : o.roomId);
@@ -114,6 +119,7 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
       isAdmin: isAdmin(u),
       canChat: canChat(o),
       canVoice: canVoice(o),
+      canQuick: canQuick(o),
       ...(kid
         ? {
           kid: {
@@ -127,12 +133,16 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
     };
   }
 
-  // kids who can't chat sit in the "nochat" socket room, which chat broadcasts skip
+  // kids who can't type sit in the "nochat" socket room, which typed-chat broadcasts skip;
+  // kids without quick chat also sit in "noquick", which quick-chat broadcasts skip
   function syncChatFlag(o) {
-    const allowed = canChat(o);
+    const chat = canChat(o);
+    const quick = canQuick(o);
     for (const s of o.sockets) {
-      if (allowed) s.leave('nochat');
+      if (chat) s.leave('nochat');
       else s.join('nochat');
+      if (quick) s.leave('noquick');
+      else s.join('noquick');
     }
   }
 
@@ -142,7 +152,8 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
     io.to(`u:${o.user.id}`).emit('state', {
       me: meInfo(o),
       room: roomInfo(room),
-      history: canChat(o) ? history.get(room) || [] : [],
+      history: visibleHistory(o, history.get(room) || []),
+      quick: canQuick(o) ? quickchat.PHRASES : [],
       rooms: openRoomIds(group(o)).map((id) => ({ id, title: roomTitle(id), count: membersOf(id).length })),
       iceServers,
     });
@@ -348,10 +359,13 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
   io.on('connection', async (socket) => {
     const uid = socket.data.uid;
     let o = online.get(uid);
+    const user = await db.findUserById(uid);
+    if (!user) return socket.disconnect(true);
     if (!o) {
-      const user = await db.findUserById(uid);
       o = { user, sockets: new Set(), partyId: null, roomId: openRoomIds(auth.ageGroup(user))[0] || null, voiceSocket: null, voiceRoom: null, game: null, friendList: [], requests: [] };
       online.set(uid, o);
+    } else {
+      o.user = user; // a quick reconnect (page reload) still picks up the latest account
     }
     clearTimeout(leaveTimers.get(uid));
     leaveTimers.delete(uid);
@@ -415,6 +429,25 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
       if (hist.length > HISTORY) hist.shift();
       history.set(room, hist);
       io.to(`r:${room}`).except('nochat').emit('chat:msg', msg);
+      reply({ ok: true });
+    });
+
+    // quick chat: preset phrases only, so no AI check is needed
+    on('chat:quick', ({ id }, reply) => {
+      const phrase = quickchat.byId.get(String(id || ''));
+      if (!phrase) return reply({ ok: false });
+      if (kidLocked(o)) return reply({ ok: false, reason: LOCKED_MSG });
+      if (!canQuick(o)) return reply({ ok: false, reason: 'Quick chat is off. A parent can turn it on from the parent page.' });
+      const room = currentRoom(o);
+      if (room.startsWith('solo-')) return reply({ ok: false, reason: 'Party up with a friend to chat!' });
+      if (isMuted(o.user)) return reply({ ok: false, reason: `You're muted until ${new Date(o.user.mutedUntil).toLocaleTimeString()}` });
+      if (!rateOk(uid)) return reply({ ok: false, reason: 'Slow down a little!' });
+      const msg = { id: crypto.randomUUID(), room, from: { id: uid, name: o.user.name, robloxId: o.user.robloxId }, text: phrase.text, quick: true, ts: Date.now() };
+      const hist = history.get(room) || [];
+      hist.push(msg);
+      if (hist.length > HISTORY) hist.shift();
+      history.set(room, hist);
+      io.to(`r:${room}`).except('noquick').emit('chat:msg', msg);
       reply({ ok: true });
     });
 
@@ -701,8 +734,8 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
               return { name: m.user.name, robloxId: m.user.robloxId, status: freshGame(m) || 'Website', leader: id === p.leaderId, ready: p.ready.has(id) };
             }),
         },
-        // kids without chat permission get no chat in the game either
-        chat: canChat(o) ? (history.get(`party-${p.id}`) || []).slice(-8).map((m) => ({ id: m.id, name: m.from.name, robloxId: m.from.robloxId, text: m.text, ts: m.ts })) : [],
+        // kids only get the chat they're allowed in the game too (typed, quick-chat only, or none)
+        chat: visibleHistory(o, history.get(`party-${p.id}`) || []).slice(-8).map((m) => ({ id: m.id, name: m.from.name, robloxId: m.from.robloxId, text: m.text, ts: m.ts })),
       };
     },
     isOnline: (uid) => Boolean(online.get(uid)?.sockets.size),
