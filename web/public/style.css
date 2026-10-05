@@ -264,3 +264,13 @@ body.has-verify .app { height: calc(100vh - 62px - 46px); }
   .tab { font-size: 14px; padding: 6px 6px; }
   .me-chip { padding: 3px; }
 }
+
+/* ---------- MY STYLE link (party panel) */
+.style-link {
+  display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 12px 14px; border-radius: 12px; text-decoration: none; color: var(--text);
+  background: linear-gradient(135deg, rgba(106, 47, 209, 0.45), rgba(63, 169, 255, 0.25)); border: 1px solid rgba(255, 220, 50, 0.35);
+}
+.style-link b { font-family: var(--head); font-weight: 400; font-size: 19px; color: var(--yellow); letter-spacing: 0.5px; }
+.style-link .muted { font-size: 12.5px; }
+.style-link .big-emoji { font-size: 30px; }
+.style-link:hover { filter: brightness(1.12); }

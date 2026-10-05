@@ -2,6 +2,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const db = require('./db');
+const looks = require('./looks');
 
 const STATUSES = new Set(['Lobby', 'Warm-up', 'On the bus', 'In match', 'Spectating']);
 
@@ -35,9 +36,44 @@ module.exports = function gameRoutes(rt) {
       if (!u) continue;
       const status = STATUSES.has(p.status) ? p.status : 'Lobby';
       rt.setGamePresence(u.id, status);
-      out[String(u.robloxId)] = { name: u.name, ...rt.gameInfoFor(u.id) };
+      // lookVer: when it changes, the game fetches the new look (/look) and dresses the player
+      out[String(u.robloxId)] = { name: u.name, lookVer: u.lookVer || 0, ...rt.gameInfoFor(u.id) };
     }
     res.json({ players: out });
+  });
+
+  // ---- avatar builder ("MY STYLE")
+  const linked = async (req, res) => {
+    const u = await db.findUserByRoblox(Number(req.body?.robloxId));
+    if (!u) res.json({ ok: false, reason: 'not linked' });
+    return u;
+  };
+
+  // the game asks for a player's look after seeing a new lookVer
+  r.post('/look', async (req, res) => {
+    const u = await linked(req, res);
+    if (!u) return;
+    res.json({ ok: true, look: u.look, lookVer: u.lookVer || 0 });
+  });
+
+  // the player changed their look in the game (the game server already checked they own every item)
+  r.post('/look/save', async (req, res) => {
+    const u = await linked(req, res);
+    if (!u) return;
+    // reset = back to the normal Roblox avatar (the game can't send a JSON null)
+    const look = req.body.reset === true || req.body.look === null ? null : looks.sanitizeLook(req.body.look).look;
+    const lookVer = Date.now();
+    await db.updateUser(u.id, { look, lookVer });
+    res.json({ ok: true, lookVer });
+  });
+
+  // the player's owned items, read by the game with their permission (Roblox inventories are usually private)
+  r.post('/inventory', async (req, res) => {
+    const u = await linked(req, res);
+    if (!u) return;
+    const items = looks.sanitizeInventory(req.body.items);
+    await db.setAvatarItems(u.id, items);
+    res.json({ ok: true, count: items.length });
   });
 
   // After a match. body: { robloxId, kills, placement, won }

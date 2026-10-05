@@ -6,6 +6,7 @@ local Core = require(script.Parent.Core)
 local Inventory = require(script.Parent.Inventory)
 local Combat = require(script.Parent.Combat)
 local Cosmetics = require(script.Parent.Cosmetics)
+local Avatar = require(script.Parent.Avatar)
 local Eliminations = require(script.Parent.Eliminations)
 local World = require(script.Parent.World)
 local C = Core.C
@@ -50,14 +51,14 @@ function PlayerFlow.sendToMenu(plr: Player)
 	Combat.cancelActions(o)
 	Inventory.sync(o)
 	task.spawn(function()
-		plr:LoadCharacter()
+		Avatar.spawn(plr)
 	end)
 end
 
 function PlayerFlow.sendToWarmup(plr: Player)
 	plr:SetAttribute("Mode", "Warmup")
 	task.spawn(function()
-		plr:LoadCharacter()
+		Avatar.spawn(plr)
 	end)
 end
 
@@ -133,7 +134,7 @@ local function onPlayerAdded(plr: Player)
 	end)
 	Core.loadData(plr)
 	Inventory.sync(Core.Owners[plr])
-	plr:LoadCharacter()
+	Avatar.spawn(plr)
 end
 
 function PlayerFlow.start()

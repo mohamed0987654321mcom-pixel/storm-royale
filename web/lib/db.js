@@ -30,6 +30,15 @@ ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_email TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT true;
 CREATE INDEX IF NOT EXISTS users_pending_email ON users (pending_email);
+-- avatar builder ("MY STYLE"): the saved look, and a version the game uses to notice changes
+ALTER TABLE users ADD COLUMN IF NOT EXISTS look JSONB;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS look_ver BIGINT NOT NULL DEFAULT 0;
+-- the player's owned Roblox items, read in the game with their permission (kept apart: it can be big)
+CREATE TABLE IF NOT EXISTS avatar_items (
+  user_id INT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  items JSONB NOT NULL DEFAULT '[]',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS reports (
   id SERIAL PRIMARY KEY,
   reporter_id INT,
@@ -66,8 +75,10 @@ const FIELDS = {
   email: 'email',
   pendingEmail: 'pending_email',
   emailVerified: 'email_verified',
+  look: 'look',
+  lookVer: 'look_ver',
 };
-const JSON_COLS = new Set(['blocked', 'stats', 'kid_settings', 'friends']);
+const JSON_COLS = new Set(['blocked', 'stats', 'kid_settings', 'friends', 'look']);
 const REQ_FIELDS = { accepted: 'accepted', fromParentOk: 'from_parent_ok', toParentOk: 'to_parent_ok' };
 
 function rowToUser(r) {
@@ -90,6 +101,8 @@ function rowToUser(r) {
     friends: r.friends || [],
     pendingEmail: r.pending_email || null,
     emailVerified: r.email_verified !== false,
+    look: r.look || null,
+    lookVer: Number(r.look_ver || 0),
     createdAt: new Date(r.created_at),
   };
 }
@@ -192,6 +205,18 @@ function pgStore(url) {
       return r ? rowToRequest(r) : null;
     },
     deleteFriendRequest: async (id) => { await pool.query('DELETE FROM friend_requests WHERE id = $1', [id]); },
+    // owned Roblox items (avatar builder)
+    getAvatarItems: async (userId) => {
+      const r = await one('SELECT items, updated_at FROM avatar_items WHERE user_id = $1', [userId]);
+      return r ? { items: r.items || [], updatedAt: new Date(r.updated_at) } : null;
+    },
+    setAvatarItems: async (userId, items) => {
+      if (items === null) return void (await pool.query('DELETE FROM avatar_items WHERE user_id = $1', [userId]));
+      await pool.query(
+        'INSERT INTO avatar_items (user_id, items, updated_at) VALUES ($1, $2, now()) ON CONFLICT (user_id) DO UPDATE SET items = EXCLUDED.items, updated_at = now()',
+        [userId, JSON.stringify(items)],
+      );
+    },
   };
   return store;
 }
@@ -202,7 +227,9 @@ function memoryStore() {
   let requests = [];
   let nextUser = 1;
   let nextReq = 1;
-  const copy = (u) => (u ? { ...u, blocked: [...u.blocked], stats: { ...u.stats }, kidSettings: { ...u.kidSettings }, friends: [...u.friends] } : null);
+  const avatarItems = new Map(); // userId -> { items, updatedAt }
+  const clone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
+  const copy = (u) => (u ? { ...u, blocked: [...u.blocked], stats: { ...u.stats }, kidSettings: { ...u.kidSettings }, friends: [...u.friends], look: clone(u.look) } : null);
   const copyReq = (r) => (r ? { ...r } : null);
   return {
     kind: 'memory',
@@ -219,7 +246,7 @@ function memoryStore() {
       if (users.some((u) => (email && u.email === email) || u.name.toLowerCase() === name.toLowerCase())) throw Object.assign(new Error('duplicate'), { code: '23505' });
       const u = {
         id: nextUser++, email: email || null, pendingEmail, emailVerified, name, birthDate, robloxId: null, robloxName: null, strikes: 0, bannedUntil: null, mutedUntil: null,
-        blocked: [], stats: {}, parentEmail, consent, kidSettings: { chat: false, voice: false, quick: true }, friends: [], createdAt: new Date(),
+        blocked: [], stats: {}, parentEmail, consent, kidSettings: { chat: false, voice: false, quick: true }, friends: [], look: null, lookVer: 0, createdAt: new Date(),
       };
       users.push(u);
       return copy(u);
@@ -231,11 +258,12 @@ function memoryStore() {
         if (!FIELDS[k]) throw new Error('bad field ' + k);
         if (k === 'robloxId' && v != null && users.some((x) => x.robloxId === v && x.id !== id)) throw Object.assign(new Error('duplicate'), { code: '23505' });
         if (k === 'email' && v != null && users.some((x) => x.email === v && x.id !== id)) throw Object.assign(new Error('duplicate'), { code: '23505' });
-        u[k] = v;
+        u[k] = k === 'look' ? clone(v) : v;
       }
       return copy(u);
     },
     deleteUser: async (id) => {
+      avatarItems.delete(id);
       users = users.filter((u) => u.id !== id);
       for (const u of users) u.friends = u.friends.filter((f) => f !== id);
       requests = requests.filter((r) => r.fromId !== id && r.toId !== id);
@@ -269,6 +297,14 @@ function memoryStore() {
       return copyReq(r);
     },
     deleteFriendRequest: async (id) => { requests = requests.filter((r) => r.id !== id); },
+    getAvatarItems: async (userId) => {
+      const r = avatarItems.get(userId);
+      return r ? { items: clone(r.items), updatedAt: r.updatedAt } : null;
+    },
+    setAvatarItems: async (userId, items) => {
+      if (items === null) avatarItems.delete(userId);
+      else avatarItems.set(userId, { items: clone(items), updatedAt: new Date() });
+    },
   };
 }
 

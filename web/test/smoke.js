@@ -29,6 +29,25 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, opts) => {
   const u = String(url);
   if (u.includes('api.anthropic.com')) return fakeClaude(opts);
+  // fake Roblox avatar + thumbnail APIs for the locker
+  if (u.includes('avatar.roblox.com/v2/avatar/users/222/avatar')) {
+    return new Response(JSON.stringify({
+      playerAvatarType: 'R15',
+      scales: { height: 1.05, width: 0.94, head: 1, depth: 0.97, proportion: 0, bodyType: 1 },
+      bodyColor3s: { headColor3: 'e5e4df', torsoColor3: '4b974b', rightArmColor3: 'e5e4df', leftArmColor3: 'e5e4df', rightLegColor3: '6e99ca', leftLegColor3: '6e99ca' },
+      assets: [
+        { id: 1001, name: 'Cool Hat', assetType: { id: 8, name: 'Hat' } },
+        { id: 1002, name: 'Motorcycle Shirt', assetType: { id: 11, name: 'Shirt' } },
+        { id: 1003, name: 'Green Jeans', assetType: { id: 12, name: 'Pants' } },
+        { id: 1004, name: 'Smile', assetType: { id: 18, name: 'Face' } },
+        { id: 1005, name: 'Default Mood', assetType: { id: 78, name: 'MoodAnimation' } },
+      ],
+    }), { status: 200 });
+  }
+  if (u.includes('thumbnails.roblox.com/v1/assets')) {
+    const ids = new URL(u).searchParams.get('assetIds').split(',');
+    return new Response(JSON.stringify({ data: ids.map((id) => ({ targetId: Number(id), state: 'Completed', imageUrl: `https://tr.rbxcdn.com/fake-${id}/150/150/Hat/Png/noFilter` })) }), { status: 200 });
+  }
   if (u.includes('users.roblox.com/v1/usernames/users')) return new Response(JSON.stringify({ data: [{ id: 111, name: 'RobloxAce' }] }), { status: 200 });
   if (u.includes('users.roblox.com/v1/users/111')) return new Response(JSON.stringify({ id: 111, description: robloxBio }), { status: 200 });
   return realFetch(url, opts);
@@ -345,6 +364,65 @@ const ask = (s, ev, payload) => new Promise((res) => s.emit(ev, payload || {}, r
   assert.ok(lastState(T).me.mutedUntil, 'three different players = muted');
   assert.ok(got(T, 'chat:system', (m) => /Several players reported you/.test(m.text)));
   ok('3 different players reporting someone mutes them until a moderator looks');
+
+  // ================================================================ MY STYLE (avatar builder)
+  const cY = await signup('style@test.com', 'Stylist', '2004-04-04');
+  const styleId = (await pget('/api/me', cY)).id;
+  assert.equal((await pget('/api/avatar', cY)).linked, false, 'needs a linked Roblox account');
+  await require('../lib/db').updateUser(styleId, { robloxId: 222, robloxName: 'StylistRbx' }); // stands in for the About-code link
+  let av = await pget('/api/avatar', cY);
+  assert.equal(av.linked, true);
+  assert.deepEqual(av.items.map((i) => i.id).sort(), [1001, 1002, 1003, 1004], 'worn Roblox items (animations left out)');
+  assert.equal(av.saved, false);
+  assert.equal(av.look.colors.torso, '#4b974b');
+  assert.equal(av.look.scales.bodyType, 1);
+  assert.equal(av.inventoryAt, null);
+  ok('the locker starts from what you wear on Roblox (public), before the game shares your items');
+
+  const gameKey = { 'x-api-key': 'test-key-123' };
+  r = await post('/api/game/inventory', { robloxId: 222, items: [{ id: 2001, type: 'BackAccessory', name: 'Storm Wings' }, { id: 2002, type: 'Gear', name: 'nope' }, { id: 'x', type: 'Hat' }] }, null, gameKey);
+  assert.equal((await r.json()).count, 1);
+  const bigInv = Array.from({ length: 2500 }, (_, i) => ({ id: 50000 + i, type: 'Hat', name: `Hat number ${i} with a long-ish name` }));
+  bigInv.push({ id: 2001, type: 'BackAccessory', name: 'Storm Wings' });
+  r = await post('/api/game/inventory', { robloxId: 222, items: bigInv }, null, gameKey);
+  assert.equal((await r.json()).count, 2501, 'a big owned-items list fits');
+  av = await pget('/api/avatar', cY);
+  assert.equal(av.items.length, 2505);
+  assert.ok(av.inventoryAt);
+  ok('the game shares the owned-items list (read with permission), big lists included');
+
+  r = await post('/api/avatar', { look: { items: [{ id: 1001, type: 'Hat' }, { id: 2001, type: 'BackAccessory' }, { id: 7777, type: 'Hat' }], colors: { head: '#FFCC99' }, scales: { height: 9 } } }, cY);
+  const saved = await r.json();
+  assert.deepEqual(saved.look.items.map((i) => i.id), [1001, 2001]);
+  assert.deepEqual(saved.dropped.map((d) => d.reason), ['not_owned']);
+  assert.equal(saved.look.colors.head, '#ffcc99');
+  assert.equal(saved.look.scales.height, 1.05);
+  r = await post('/api/game/sync', { players: [{ robloxId: 222, status: 'Lobby' }] }, null, gameKey);
+  assert.equal((await r.json()).players['222'].lookVer, saved.lookVer, 'the game sees the new look version');
+  r = await post('/api/game/look', { robloxId: 222 }, null, gameKey);
+  assert.deepEqual((await r.json()).look.items.map((i) => i.id), [1001, 2001]);
+  ok("saving on the website keeps only items you own, and the game picks it up");
+
+  r = await post('/api/game/look/save', { robloxId: 222, look: { items: [{ id: 1002, type: 'Shirt', name: 'Motorcycle Shirt' }], colors: [], scales: {} } }, null, gameKey);
+  const gv = (await r.json()).lookVer;
+  assert.ok(gv > saved.lookVer);
+  assert.equal((await pget('/api/avatar/ver', cY)).lookVer, gv);
+  av = await pget('/api/avatar', cY);
+  assert.deepEqual(av.look.items.map((i) => i.id), [1002]);
+  assert.equal(av.saved, true);
+  r = await post('/api/game/look/save', { robloxId: 222, look: {}, reset: true }, null, gameKey);
+  assert.equal((await pget('/api/avatar', cY)).saved, false, 'back to the normal avatar');
+  assert.equal((await (await post('/api/game/look', { robloxId: 99999 }, null, gameKey)).json()).ok, false);
+  ok('looks made in the game show up on the website (and "normal avatar" too)');
+
+  r = await post('/api/avatar/thumbs', { ids: [1001, 2001, 'bad'] }, cY);
+  const th = (await r.json()).thumbs;
+  assert.match(th['1001'], /^https:\/\/tr\.rbxcdn\.com\//);
+  assert.ok(th['2001']);
+  await post('/api/roblox/unlink', {}, cY);
+  assert.equal((await pget('/api/avatar', cY)).linked, false);
+  assert.equal(await require('../lib/db').getAvatarItems(styleId), null, 'unlinking forgets the old account\'s items');
+  ok('item pictures come from Roblox; unlinking clears the old items and look');
 
   // ================================================================ "skip email for now"
   r = await post('/api/auth/start', { email: 'Skipper@test.com', name: 'SkipperTeen', birthDate: '2009-02-02', skip: true });

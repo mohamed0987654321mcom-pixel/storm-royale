@@ -9,6 +9,7 @@ const moderation = require('./lib/moderation');
 const attachRealtime = require('./lib/realtime');
 const gameRoutes = require('./lib/game');
 const parentRoutes = require('./lib/parents');
+const avatarRoutes = require('./lib/avatar');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMINS = String(process.env.ADMIN_EMAILS || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
@@ -22,6 +23,8 @@ function iceServers() {
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+// the game uploads a player's owned-items list, which can be big; everything else stays small
+app.use('/api/game', express.json({ limit: '512kb' }));
 app.use(express.json({ limit: '50kb' }));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -29,7 +32,7 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'microphone=(self), camera=()');
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' wss: ws:; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://*.rbxcdn.com; media-src 'self' blob:; connect-src 'self' wss: ws:; frame-ancestors 'none'",
   );
   next();
 });
@@ -44,6 +47,7 @@ const rt = attachRealtime(server, {
 });
 parents = parentRoutes({ rt, publicUrl });
 app.use(parents.router);
+app.use(avatarRoutes());
 
 const baseUrl = (req) => process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
 
@@ -305,7 +309,9 @@ app.post('/api/roblox/verify', needUser(async (req, res, user) => {
     return res.status(400).json({ error: `Couldn't find "${p.code}" in ${p.robloxName}'s About section yet. Save it on Roblox and try again.` });
   }
   try {
-    await db.updateUser(user.id, { robloxId: p.robloxId, robloxName: p.robloxName });
+    const changed = user.robloxId !== p.robloxId;
+    await db.updateUser(user.id, { robloxId: p.robloxId, robloxName: p.robloxName, ...(changed ? { look: null, lookVer: Date.now() } : {}) });
+    if (changed) await db.setAvatarItems(user.id, null); // items belonged to the old Roblox account
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'That Roblox account is linked to another Storm Royale account' });
     throw err;
@@ -316,7 +322,8 @@ app.post('/api/roblox/verify', needUser(async (req, res, user) => {
 }));
 
 app.post('/api/roblox/unlink', needUser(async (req, res, user) => {
-  await db.updateUser(user.id, { robloxId: null, robloxName: null });
+  await db.updateUser(user.id, { robloxId: null, robloxName: null, look: null, lookVer: Date.now() });
+  await db.setAvatarItems(user.id, null);
   await rt.refreshUser(user.id);
   res.json({ ok: true });
 }));
@@ -363,6 +370,7 @@ app.get('/health', (req, res) => res.json({ ok: true, db: db.kind, moderation: m
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/parent', (req, res) => res.sendFile(path.join(__dirname, 'public', 'parent.html')));
+app.get('/locker', (req, res) => res.sendFile(path.join(__dirname, 'public', 'locker.html')));
 
 db.init()
   .then(() => {

@@ -3,6 +3,7 @@
 local HttpService = game:GetService("HttpService")
 
 local Core = require(script.Parent.Core)
+local AvatarEditor = require(script.Parent.AvatarEditor)
 local C, Net, S, plr = Core.C, Core.Net, Core.S, Core.plr
 local new, corner, stroke, text, button, gradient = Core.new, Core.corner, Core.stroke, Core.text, Core.button, Core.gradient
 local WHITE, YELLOW, FONT_H, FONT_B, FONT_M = Core.WHITE, Core.YELLOW, Core.FONT_H, Core.FONT_B, Core.FONT_M
@@ -96,6 +97,27 @@ local function scroller(page: Instance): any
 	return new("ScrollingFrame", { Size = UDim2.new(0, 640, 1, -40), Position = UDim2.new(1, -670, 0, 20), BackgroundTransparency = 1, BorderSizePixel = 0, CanvasSize = UDim2.new(0, 960, 0, 470), ScrollBarThickness = 6 }, page)
 end
 local LockerBox = scroller(Pages.LOCKER)
+
+-- MY STYLE: dress up with your own Roblox items (opens the editor where the outfits are)
+do
+	local pg = Pages.LOCKER
+	local styleBtn = new("TextButton", { Text = "", Size = UDim2.new(0, 300, 0, 86), Position = UDim2.new(0, 30, 1, -116), BackgroundColor3 = Color3.fromRGB(90, 40, 190), AutoButtonColor = true, BorderSizePixel = 0 }, pg)
+	corner(styleBtn, 10)
+	gradient(styleBtn, Color3.fromRGB(130, 70, 230), Color3.fromRGB(40, 90, 210), 0)
+	stroke(styleBtn, YELLOW, 2)
+	text(styleBtn, "🎨 MY STYLE", UDim2.new(1, -24, 0, 40), UDim2.new(0, 14, 0, 6), FONT_H, 30, YELLOW, Enum.TextXAlignment.Left)
+	local sub = text(styleBtn, "Wear the Roblox items you own", UDim2.new(1, -24, 0, 28), UDim2.new(0, 14, 0, 48), FONT_M, 15, WHITE, Enum.TextXAlignment.Left)
+	sub.TextWrapped = true
+	AvatarEditor.build(pg, function()
+		LockerBox.Visible = true
+		styleBtn.Visible = true
+	end)
+	styleBtn.MouseButton1Click:Connect(function()
+		LockerBox.Visible = false
+		styleBtn.Visible = false
+		AvatarEditor.open()
+	end)
+end
 local ShopBox = scroller(Pages["ITEM SHOP"])
 local CareerBox = new("Frame", { Size = UDim2.new(0, 560, 0, 300), Position = UDim2.new(1, -590, 0, 30), BackgroundTransparency = 1 }, Pages.CAREER)
 
@@ -158,6 +180,7 @@ local function onData()
 		if ok then
 			S.Data = d
 			rebuildMenus()
+			AvatarEditor.onData()
 		end
 	end
 end

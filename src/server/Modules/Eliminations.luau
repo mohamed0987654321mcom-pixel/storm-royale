@@ -6,6 +6,7 @@ local Core = require(script.Parent.Core)
 local Inventory = require(script.Parent.Inventory)
 local Loot = require(script.Parent.Loot)
 local Cosmetics = require(script.Parent.Cosmetics)
+local Avatar = require(script.Parent.Avatar)
 local WebLink = require(script.Parent.WebLink)
 local C, Net = Core.C, Core.Net
 
@@ -21,7 +22,7 @@ function Eliminations.onEliminated(o, char: Model)
 	if mode == "Warmup" or mode == "Menu" then
 		task.delay(2.5, function()
 			if o.Player.Parent and o.Player:GetAttribute("Mode") == mode then
-				o.Player:LoadCharacter()
+				Avatar.spawn(o.Player)
 			end
 		end)
 		return

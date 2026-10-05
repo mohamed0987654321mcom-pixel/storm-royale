@@ -690,7 +690,14 @@
       history.replaceState(null, '', '/');
     }
     const res = await fetch('/api/me');
-    if (res.ok) startApp();
-    else showSignIn();
+    if (res.ok) {
+      startApp();
+      // /?profile=1 (from the locker page): open the profile once the account has loaded
+      if (q.get('profile') === '1') {
+        history.replaceState(null, '', '/');
+        const open = () => (S.me ? ($('#meChip').click()) : setTimeout(open, 200));
+        open();
+      }
+    } else showSignIn();
   })();
 })();

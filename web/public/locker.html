@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Storm Royale · Locker</title>
+  <meta name="description" content="Dress up your Storm Royale character with the Roblox items you own.">
+  <meta name="theme-color" content="#0b1640">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Nunito:wght@600;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/locker.css">
+</head>
+<body class="locker-page">
+  <header class="top">
+    <a class="logo home" href="/">STORM ROYALE</a>
+    <span class="pill tag">LOCKER</span>
+    <a class="btn ghost back-btn" href="/">← BACK</a>
+  </header>
+
+  <main class="locker-wrap">
+    <p class="loading" id="loading">Loading your locker…</p>
+
+    <!-- Roblox account not linked yet -->
+    <section class="card notice" id="notLinked" hidden>
+      <div class="big-emoji">🔗</div>
+      <h2>LINK ROBLOX FIRST</h2>
+      <p>Your locker uses the items you own on Roblox, so link your Roblox account first.</p>
+      <a class="btn yellow" href="/?profile=1">OPEN MY PROFILE</a>
+    </section>
+
+    <div class="locker" id="locker" hidden>
+      <!-- preview -->
+      <section class="card preview-card">
+        <div class="preview-head">
+          <h2>MY STYLE</h2>
+          <span class="saved-tag" id="savedTag"></span>
+        </div>
+        <svg class="mannequin" id="mannequin" viewBox="0 0 200 270" role="img" aria-label="Your character's colors and size"></svg>
+        <p class="hint center">Colors and sizes show here. Your items show on your character in the game.</p>
+        <h3 class="sub">WEARING <span id="wearCount"></span></h3>
+        <div class="wearing" id="wearing"></div>
+        <div class="row">
+          <button class="btn ghost" id="fromRoblox" type="button">COPY MY ROBLOX AVATAR</button>
+          <button class="btn ghost" id="resetBtn" type="button">USE NORMAL AVATAR</button>
+        </div>
+      </section>
+
+      <!-- builder -->
+      <section class="card builder">
+        <div class="inv-note" id="invNote" hidden>
+          <b>Showing the items you're wearing on Roblox.</b> To see <b>all</b> your items: in Storm Royale, open <b>LOCKER → MY STYLE</b> and tap <b>SHOW MY ITEMS</b> once.
+        </div>
+        <nav class="cats" id="cats" aria-label="Categories"></nav>
+        <div id="itemsPanel">
+          <div class="filters">
+            <input id="search" type="search" placeholder="Search your items" autocomplete="off">
+            <div class="chips" id="typeChips"></div>
+          </div>
+          <div class="grid" id="grid"></div>
+          <p class="empty" id="empty" hidden></p>
+        </div>
+        <div id="colorsPanel" hidden>
+          <div class="chips" id="partChips"></div>
+          <div class="swatches" id="swatches"></div>
+          <label class="custom-color">Any color <input type="color" id="colorPick" value="#f5cd9b"></label>
+        </div>
+        <div id="sizePanel" hidden>
+          <div id="sliders"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div class="savebar" id="savebar" hidden>
+    <span id="dirtyNote">You have unsaved changes</span>
+    <button class="btn ghost" id="undoBtn" type="button">UNDO</button>
+    <button class="btn yellow" id="saveBtn" type="button">SAVE</button>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+  <script src="/locker.js"></script>
+</body>
+</html>

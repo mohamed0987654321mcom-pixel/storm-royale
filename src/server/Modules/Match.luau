@@ -10,6 +10,7 @@ local Loot = require(script.Parent.Loot)
 local World = require(script.Parent.World)
 local Bots = require(script.Parent.Bots)
 local SkyBus = require(script.Parent.SkyBus)
+local Avatar = require(script.Parent.Avatar)
 local Storm = require(script.Parent.Storm)
 local PlayerFlow = require(script.Parent.PlayerFlow)
 local WebLink = require(script.Parent.WebLink)
@@ -37,7 +38,7 @@ local function runMatch()
 		local ch = plr.Character
 		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
 		if not ch or not hum or hum.Health <= 0 then
-			plr:LoadCharacter()
+			Avatar.spawn(plr)
 			ch = plr.Character
 			hum = ch and ch:FindFirstChildOfClass("Humanoid")
 		end

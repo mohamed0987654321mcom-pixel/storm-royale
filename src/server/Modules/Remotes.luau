@@ -1,9 +1,13 @@
 -- Remotes: every request the client can send, validated before anything happens
 
+local Players = game:GetService("Players")
+
 local Core = require(script.Parent.Core)
 local Combat = require(script.Parent.Combat)
 local Building = require(script.Parent.Building)
 local Cosmetics = require(script.Parent.Cosmetics)
+local Avatar = require(script.Parent.Avatar)
+local WebLink = require(script.Parent.WebLink)
 local SkyBus = require(script.Parent.SkyBus)
 local PlayerFlow = require(script.Parent.PlayerFlow)
 local Inventory = require(script.Parent.Inventory)
@@ -137,7 +141,7 @@ Handlers.Cosmetic = function(plr: Player, id)
 		if id == "Default" then
 			if plr:GetAttribute("Mode") == "Menu" then
 				task.spawn(function()
-					plr:LoadCharacter()
+					Avatar.spawn(plr)
 				end)
 			end
 		else
@@ -145,6 +149,77 @@ Handlers.Cosmetic = function(plr: Player, id)
 		end
 	end
 end
+
+-- MY STYLE (avatar builder) -----------------------------------------------------------
+
+-- the editor opened: send the player's normal Roblox avatar as a starting point
+Handlers.AvatarStart = function(plr: Player)
+	Avatar.sendStart(plr)
+end
+
+-- save a look (latest one wins if several arrive while one is being checked)
+local saving: { [Player]: boolean } = {}
+local nextLook: { [Player]: any } = {}
+Handlers.AvatarSave = function(plr: Player, look)
+	if type(look) ~= "table" or not Data[plr] then
+		return
+	end
+	nextLook[plr] = look
+	if saving[plr] then
+		return
+	end
+	saving[plr] = true
+	while nextLook[plr] do
+		local l = nextLook[plr]
+		nextLook[plr] = nil
+		local clean, notOwned, unchecked = Avatar.verify(plr, l) -- only items this player owns
+		Avatar.setLook(plr, clean)
+		WebLink.saveLook(plr, clean)
+		Net:FireClient(plr, "AvatarSaved", { NotOwned = notOwned, Unchecked = unchecked })
+	end
+	saving[plr] = nil
+end
+
+-- back to the normal Roblox avatar
+Handlers.AvatarReset = function(plr: Player)
+	if not Data[plr] then
+		return
+	end
+	nextLook[plr] = nil
+	Avatar.setLook(plr, nil)
+	WebLink.saveLook(plr, nil)
+	Net:FireClient(plr, "AvatarSaved", { NotOwned = 0, Unchecked = 0, Reset = true })
+end
+
+-- the player's owned items (read on their device after they allowed it), sent in chunks; shared with the website
+local invBuf: { [Player]: { any } } = {}
+local lastUpload: { [Player]: number } = {}
+Handlers.AvatarInventory = function(plr: Player, chunk, done)
+	if type(chunk) ~= "table" then
+		return
+	end
+	local buf = invBuf[plr] or {}
+	invBuf[plr] = buf
+	for _, it in chunk do
+		if #buf >= 3000 then
+			break
+		end
+		table.insert(buf, it)
+	end
+	if done ~= true then
+		return
+	end
+	invBuf[plr] = nil
+	if os.clock() - (lastUpload[plr] or -1e9) < 30 then
+		return
+	end
+	lastUpload[plr] = os.clock()
+	WebLink.uploadInventory(plr, Avatar.sanitizeInventory(buf))
+end
+
+Players.PlayerRemoving:Connect(function(plr)
+	saving[plr], nextLook[plr], invBuf[plr], lastUpload[plr] = nil, nil, nil, nil
+end)
 
 function Remotes.connect()
 	Net.OnServerEvent:Connect(function(plr, action, ...)

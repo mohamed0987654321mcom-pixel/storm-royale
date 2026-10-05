@@ -23,6 +23,7 @@ src/
 │       ├── SkyBus.luau        the bus and jumping out
 │       ├── Storm.luau         storm circles and storm damage
 │       ├── PlayerFlow.luau    joining, lobby, warm-up island
+│       ├── Avatar.luau        MY STYLE looks: ownership checks, spawning dressed
 │       ├── Match.luau         countdown → bus → storm → winner
 │       └── Remotes.luau       every client request, validated
 └── client/                    → StarterPlayer.StarterPlayerScripts.Client
@@ -30,6 +31,7 @@ src/
     └── Modules/
         ├── Core.luau          shared state, UI + aiming helpers
         ├── Lobby.luau         menu tabs, locker, item shop, career
+        ├── AvatarEditor.luau  MY STYLE editor (your Roblox items, colors, sizes)
         ├── Hud.luau           health/shield, hotbar, minimap, feed, crosshair
         ├── Effects.luau       tracers, muzzle flash, damage numbers
         ├── Weapons.luau       shooting, pickaxe, heals
@@ -107,6 +109,13 @@ Run locally: `cd web && npm install && DEV_SHOW_LINK=1 npm start` → http://loc
 | `PUBLIC_URL` | the site's address, used in email links |
 | `KIDS_ENABLED` | `1` allows under-13 sign-ups (keep off until parent verification is connected) |
 | `KWS_ENABLED`, `KWS_CLIENT_ID`, `KWS_CLIENT_SECRET` | Phase 2: Epic Kids Web Services parent verification |
+
+### MY STYLE (avatar builder with your own Roblox items)
+- **In the game:** LOCKER → **🎨 MY STYLE**. Tap **SHOW MY ITEMS** once (Roblox asks the player to allow it), then wear owned items, pick body colors and sizes. Every change saves and shows on the character in the lobby. **SAVE TO MY ROBLOX AVATAR** can also make it the real Roblox avatar (Roblox asks to confirm)
+- **On the website:** `/locker` (or **MY STYLE** in the party panel / profile). Same items, colors and sizes; SAVE and the game picks it up within ~10 s
+- Owned items only: the game server checks every worn item with `MarketplaceService:PlayerOwnsAsset`; the website only accepts items from the list the game shared plus what the player wears on Roblox right now (Roblox inventories are usually private, so the game reads them with the player's permission)
+- Looks only change Storm Royale, never the real Roblox avatar (unless the player uses SAVE TO MY ROBLOX AVATAR). "Normal avatar" goes back to the Roblox avatar
+- Code: `src/server/Modules/Avatar.luau`, `src/client/Modules/AvatarEditor.luau`, `web/lib/looks.js` (same rules on both sides), `web/lib/avatar.js`, `web/public/locker.*`
 
 ### Strict moderation (a place for everyone)
 - Same rules for kids, teens and adults: no swearing (even disguised), no put-downs, nothing sexual, no dating talk, no personal info (age, location, school, photos), no other apps or "dm me", no scams or spam, no dodging the filter

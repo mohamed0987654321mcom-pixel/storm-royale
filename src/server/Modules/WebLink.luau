@@ -17,6 +17,7 @@ local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
 
 local Core = require(script.Parent.Core)
+local Avatar = require(script.Parent.Avatar)
 local C, Net = Core.C, Core.Net
 
 local WebLink = {}
@@ -24,6 +25,8 @@ local WebLink = {}
 local apiKey: string? = nil
 local filtered: { [string]: string | false } = {} -- "<msgId>:<viewerId>" -> filtered text (false = hidden)
 local robloxNames: { [number]: string } = {}
+local linkedNow: { [Player]: boolean } = {} -- linked to a website account (as of the last sync)
+local pulling: { [Player]: boolean } = {}
 
 local STATUS = { Menu = "Lobby", Warmup = "Warm-up", Bus = "On the bus", Match = "In match", Dead = "Spectating" }
 
@@ -122,6 +125,69 @@ local function sendToPlayer(plr: Player, info)
 	Net:FireClient(plr, "WebParty", { Linked = true, Members = members, Chat = chat })
 end
 
+-------------------------------------------------------------------------------
+-- MY STYLE looks: the website and the game share one look per player
+-------------------------------------------------------------------------------
+
+-- send a look made in the game to the website (nil = back to the normal avatar)
+function WebLink.saveLook(plr: Player, look: any?)
+	if not apiKey or not linkedNow[plr] then
+		return
+	end
+	-- JSON can't carry a Lua nil, so "back to normal" is sent as reset = true
+	local res = post("/api/game/look/save", { robloxId = plr.UserId, look = look or {}, reset = look == nil })
+	local d = Core.Data[plr]
+	if res and res.ok and d then
+		d.WebLookVer = tonumber(res.lookVer)
+	end
+end
+
+-- the player's owned items, so the website locker can show them too
+function WebLink.uploadInventory(plr: Player, items: { any })
+	if not apiKey or not linkedNow[plr] then
+		return
+	end
+	local res = post("/api/game/inventory", { robloxId = plr.UserId, items = items })
+	if res and res.ok then
+		Core.toast(plr, "🎨 Your items are on the website locker too!")
+	end
+end
+
+-- a look saved on the website: fetch it and wear it (ownership is checked again when it's worn)
+local function pullLook(plr: Player, ver: number)
+	if pulling[plr] then
+		return
+	end
+	pulling[plr] = true
+	local res = post("/api/game/look", { robloxId = plr.UserId })
+	local d = Core.Data[plr]
+	if res and res.ok and d and plr.Parent then
+		d.WebLookVer = tonumber(res.lookVer) or ver
+		if type(res.look) == "table" then
+			Avatar.setLook(plr, Avatar.sanitize(res.look))
+			Core.toast(plr, "✨ Your look from the website is on!")
+		else
+			Avatar.setLook(plr, nil)
+		end
+	end
+	pulling[plr] = nil
+end
+
+local function syncLook(plr: Player, info: any)
+	local d = Core.Data[plr]
+	if not d or not info then
+		return
+	end
+	local ver = tonumber(info.lookVer) or 0
+	if ver > 0 and ver ~= d.WebLookVer then
+		task.spawn(pullLook, plr, ver)
+	elseif ver == 0 and type(d.Look) == "table" and d.WebLookVer == nil then
+		-- made a look in the game before linking: share it with the website
+		d.WebLookVer = 0
+		task.spawn(WebLink.saveLook, plr, d.Look)
+	end
+end
+
 local function syncOnce()
 	local list = {}
 	for _, p in Players:GetPlayers() do
@@ -135,9 +201,17 @@ local function syncOnce()
 		return
 	end
 	for _, p in Players:GetPlayers() do
-		task.spawn(sendToPlayer, p, data.players[tostring(p.UserId)])
+		local info = data.players[tostring(p.UserId)]
+		linkedNow[p] = info ~= nil
+		task.spawn(sendToPlayer, p, info)
+		syncLook(p, info)
 	end
 end
+
+Players.PlayerRemoving:Connect(function(plr)
+	linkedNow[plr] = nil
+	pulling[plr] = nil
+end)
 
 -- called when a player's match ends (eliminated or won)
 function WebLink.reportMatch(plr: Player, kills: number, placement: number, won: boolean)
