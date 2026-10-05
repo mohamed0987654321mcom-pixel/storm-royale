@@ -125,6 +125,24 @@ const ask = (s, ev, payload) => new Promise((res) => s.emit(ev, payload || {}, r
   assert.ok(got(A, 'chat:msg', (m) => m.text === 'party chat secret plan'));
   assert.ok(!got(C, 'chat:msg', (m) => m.text === 'party chat secret plan'));
   ok('create party, join by code (case-insensitive), private party chat');
+
+  // --- age separation: an adult can't join or be invited into a teen party (and can't tell why)
+  const wrongCode = await ask(C, 'party:join', { code: 'NOPE00' });
+  r = await ask(C, 'party:join', { code });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, wrongCode.reason, 'adult sees the same answer as a wrong code');
+  r = await ask(A, 'party:invite', { name: 'GrownUp' });
+  assert.equal(r.ok, true, 'inviter gets no hint about the other player');
+  await wait(150);
+  assert.ok(!got(C, 'party:invite'), 'adult never receives a teen party invite');
+  r = await ask(C, 'party:create');
+  const adultCode = r.code;
+  r = await ask(C, 'party:invite', { name: 'BuddyTeen' });
+  await wait(150);
+  assert.ok(!got(B, 'party:invite'), 'teen never receives an adult party invite');
+  assert.equal((await ask(B, 'party:join', { code: adultCode })).ok, false, 'teen cannot join an adult party');
+  await ask(C, 'party:leave');
+  ok('teens and adults can never be in the same party (no age hints leaked)');
   r = await ask(A, 'party:ready', { ready: true });
   assert.equal(r.ok, true);
   r = await ask(B, 'room:join', { roomId: 'open-teen-2' });

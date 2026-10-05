@@ -329,7 +329,8 @@ function attach(httpServer, { iceServers, admins }) {
     // ---- parties
     on('party:create', (_, reply) => {
       if (o.partyId) return reply({ ok: false, reason: "You're already in a party" });
-      const p = { id: crypto.randomBytes(5).toString('hex'), code: newCode(), leaderId: uid, members: [], ready: new Set() };
+      // a party belongs to one age group: teens and adults can never be in the same party
+      const p = { id: crypto.randomBytes(5).toString('hex'), code: newCode(), leaderId: uid, members: [], ready: new Set(), ageGroup: auth.ageGroup(o.user) };
       parties.set(p.id, p);
       partyByCode.set(p.code, p);
       joinParty(o, p);
@@ -338,7 +339,8 @@ function attach(httpServer, { iceServers, admins }) {
 
     on('party:join', ({ code }, reply) => {
       const p = partyByCode.get(String(code || '').toUpperCase().trim());
-      if (!p) return reply({ ok: false, reason: 'No party with that code' });
+      // other age group: same answer as a wrong code, so nobody can probe which parties are teens'
+      if (!p || p.ageGroup !== auth.ageGroup(o.user)) return reply({ ok: false, reason: 'No party with that code' });
       if (p.members.length >= PARTY_MAX) return reply({ ok: false, reason: 'That party is full' });
       const blockedByMember = p.members.some((id) => (online.get(id)?.user.blocked || []).includes(uid));
       if (blockedByMember) return reply({ ok: false, reason: "You can't join that party" });
@@ -351,7 +353,9 @@ function attach(httpServer, { iceServers, admins }) {
       if (!p) return reply({ ok: false, reason: 'Create a party first' });
       const target = [...online.values()].find((m) => m.user.name.toLowerCase() === String(name || '').toLowerCase());
       if (!target || target === o) return reply({ ok: false, reason: 'That player is not online' });
-      if (!(target.user.blocked || []).includes(uid) && !(o.user.blocked || []).includes(target.user.id)) {
+      // blocked or a different age group: the invite is silently dropped (no hint about the other player's age)
+      const sameAge = auth.ageGroup(target.user) === p.ageGroup;
+      if (sameAge && !(target.user.blocked || []).includes(uid) && !(o.user.blocked || []).includes(target.user.id)) {
         io.to(`u:${target.user.id}`).emit('party:invite', { from: o.user.name, code: p.code });
       }
       reply({ ok: true });

@@ -87,7 +87,7 @@ VS Code will suggest the **Rojo** and **Luau LSP** extensions. Luau LSP gives au
 Party, chat and voice site for players, deployed on Railway at **stormroyale.mparadiseplatrforms.com**.
 
 - Node.js + Express + Socket.io, Postgres on Railway (in-memory when run locally)
-- Email sign-in links (Resend), 13+ only, teen and adult lobbies kept separate
+- Email sign-in links (Resend), 13+ only; teens and adults are kept apart (separate lobbies, and no mixed parties)
 - Parties of 4 with party chat + party voice; open lobby rooms when you're not in a party
 - Voice: WebRTC between players; your browser turns your speech into text for the AI safety check
 - Moderation: Claude Haiku 4.5 checks every chat message, name and voice transcript; strikes, mutes, reports, admin page at `/admin`
