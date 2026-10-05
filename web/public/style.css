@@ -241,3 +241,26 @@ code { background: rgba(255, 220, 50, 0.15); color: var(--yellow); padding: 2px 
 .quick-chip:hover { background: rgba(63, 169, 255, 0.3); }
 .quick-chip:active { transform: translateY(1px); }
 .msg.quick-msg { background: rgba(63, 169, 255, 0.1); }
+
+/* ---------- confirm email ("skip for now" accounts) */
+.skip-btn { width: 100%; margin-top: 10px; }
+.verify-bar {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px 12px;
+  padding: 8px 16px; font-size: 13.5px; color: #1a1300; text-align: center;
+  background: linear-gradient(90deg, #fff27a, var(--yellow));
+}
+.verify-bar b { word-break: break-all; }
+.verify-bar .row-btns { display: inline-flex; gap: 6px; }
+.verify-bar .btn.ghost { color: #1a1300; border-color: rgba(26, 19, 0, 0.35); background: rgba(255, 255, 255, 0.35); }
+body.has-verify .app { height: calc(100vh - 62px - 46px); }
+@media (max-width: 1000px) {
+  body.has-verify .app { height: calc(100vh - 58px - 78px); }
+}
+
+/* ---------- phones: keep the top bar (logo + 3 tabs + you) inside the screen */
+@media (max-width: 520px) {
+  .top { gap: 6px; padding-left: 10px; padding-right: 10px; }
+  .logo { font-size: 15px; text-shadow: 0 2px 0 #9a6b00; }
+  .tab { font-size: 14px; padding: 6px 6px; }
+  .me-chip { padding: 3px; }
+}

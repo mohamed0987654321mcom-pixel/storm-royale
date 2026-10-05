@@ -51,9 +51,10 @@
     $('#meChip').hidden = true;
   }
 
-  $('#signinForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
+  // skip = "skip email for now": make the account and sign in straight away
+  async function submitSignin(skip) {
     const body = { email: $('#email').value.trim() };
+    if (!body.email) return toast('Enter your email', { bad: true });
     if (signupMode) {
       if (!$('#rules').checked) return toast('Please accept the community rules first', { bad: true });
       body.name = $('#name').value.trim();
@@ -63,14 +64,17 @@
         body.parentEmail = $('#parentEmail').value.trim();
         if (!body.parentEmail) return toast("Enter your parent's email", { bad: true });
       }
+      if (skip) body.skip = true;
     }
-    const btn = $('#signinBtn');
-    btn.disabled = true;
+    const btns = [$('#signinBtn'), $('#skipBtn')];
+    btns.forEach((b) => (b.disabled = true));
     try {
       const data = await api('/api/auth/start', body);
       if (data.needSignup) {
         signupMode = true;
         $('#signupFields').hidden = false;
+        $('#skipBox').hidden = false;
+        $('#signinBtn').textContent = 'CREATE ACCOUNT';
         $('#signinTitle').textContent = 'CREATE ACCOUNT';
         $('#signinSub').textContent = "Welcome! Pick a display name. Don't use your real name.";
         $('#name').focus();
@@ -80,6 +84,13 @@
         $('#parentField').hidden = false;
         $('#parentEmail').focus();
         toast("You're under 13, so a parent needs to say OK. Add their email.");
+        return;
+      }
+      if (data.skipped) {
+        // signed in already (the cookie came back with this answer)
+        const confirmLink = data.devLink;
+        toast(`You're in! 🎉 Confirm your email any time from the link we sent to ${body.email}.`, confirmLink ? { actions: [{ label: 'OPEN CONFIRM LINK (DEV)', cls: 'yellow', fn: () => (location.href = confirmLink) }] } : {});
+        startApp();
         return;
       }
       $('#signinForm').hidden = true;
@@ -92,7 +103,24 @@
     } catch (err) {
       toast(err.message, { bad: true });
     } finally {
-      btn.disabled = false;
+      btns.forEach((b) => (b.disabled = false));
+    }
+  }
+  $('#signinForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitSignin(false);
+  });
+  $('#skipBtn').addEventListener('click', () => submitSignin(true));
+
+  $('#resendByEmail').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const email = $('#email').value.trim();
+    if (!email) return toast('Enter your email first', { bad: true });
+    try {
+      const data = await api('/api/auth/resend-verify', { email });
+      toast(`If ${email} has an account waiting to be confirmed, its link is on the way. Check your inbox (and spam).`, data.devLink ? { actions: [{ label: 'OPEN CONFIRM LINK (DEV)', cls: 'yellow', fn: () => (location.href = data.devLink) }] } : {});
+    } catch (err) {
+      toast(err.message, { bad: true });
     }
   });
 
@@ -101,6 +129,8 @@
     $('#signinForm').hidden = false;
     $('#checkEmail').hidden = true;
     $('#signupFields').hidden = true;
+    $('#skipBox').hidden = true;
+    $('#signinBtn').textContent = 'CONTINUE';
     $('#signinTitle').textContent = 'SIGN IN';
   });
 
@@ -158,6 +188,7 @@
     if (voice.active && voice.roomId !== s.room.id) voice.leave(false);
     voice.setBlocked(S.me.blocked);
     for (const m of s.room.members) S.names.set(m.id, m.name);
+    renderVerifyBar();
     renderMe();
     renderRooms();
     renderRoom();
@@ -197,9 +228,13 @@
     $('#quickGrid').hidden = !(quickOnly || quickOpen);
     const locked = $('#chatLocked');
     locked.hidden = typing || (solo && S.me.canQuick);
-    locked.textContent = quickOnly
-      ? '⌨️ Typing is off, so use quick chat! A parent can turn typing on after verifying.'
-      : '🔒 Chat is off. A parent can turn it on from the parent page.';
+    if (S.me.typeNeedsEmail) {
+      locked.textContent = quickOnly ? '✉️ Confirm your email to type. Quick chat works now!' : '✉️ Confirm your email to type.';
+    } else {
+      locked.textContent = quickOnly
+        ? '⌨️ Typing is off, so use quick chat! A parent can turn typing on after verifying.'
+        : '🔒 Chat is off. A parent can turn it on from the parent page.';
+    }
     if (quick && !$('#quickGrid').childElementCount) {
       $('#quickGrid').replaceChildren(
         ...S.quick.map((p) =>
@@ -465,7 +500,8 @@
     const kid = S.me.ageGroup === 'kid';
     btn.disabled = !S.me.canVoice && !voice.active;
     let hint = 'Voice is checked for safety: your browser turns your speech into text and an AI moderator reads it. Audio is never recorded.';
-    if (!S.me.canVoice) hint = '🔒 Voice chat is off. A parent can turn it on from the parent page.';
+    if (S.me.voiceNeedsEmail) hint = '✉️ Confirm your email to use voice chat. The link is in your inbox.';
+    else if (!S.me.canVoice) hint = '🔒 Voice chat is off. A parent can turn it on from the parent page.';
     else if (S.me.mutedUntil) hint = `🔇 You're muted until ${new Date(S.me.mutedUntil).toLocaleTimeString()}.`;
     else if (kid && (!window.VoiceClient.canModerate || voice.transcribeFailed)) hint = "This browser can't run the voice safety check, so you can listen but not talk. Use Chrome or Safari.";
     else if (open && (!window.VoiceClient.canModerate || voice.transcribeFailed)) hint = "This browser can't run the voice safety check, so you can listen but not talk in open lobbies. Use Chrome or Safari, or talk in a party.";
@@ -551,7 +587,7 @@
   function renderProfile() {
     const me = S.me;
     $('#pName').textContent = me.name.toUpperCase();
-    $('#pEmail').textContent = me.email;
+    $('#pEmail').textContent = me.emailVerified ? me.email : `${me.email || ''} (not confirmed yet)`;
     const st = { matches: 0, wins: 0, kills: 0, best: null, ...me.stats };
     $('#pStats').replaceChildren(
       ...[['WINS', st.wins], ['ELIMS', st.kills], ['MATCHES', st.matches], ['BEST', st.best ? `#${st.best}` : '–']].map(([k, v]) =>
@@ -600,7 +636,36 @@
     await api('/api/roblox/unlink');
     setTimeout(renderProfile, 400);
   });
+  // ---------------------------------------------------------------- confirm email ("skip for now" accounts)
+  function renderVerifyBar() {
+    const need = S.me && !S.me.emailVerified;
+    $('#verifyBar').hidden = !need;
+    document.body.classList.toggle('has-verify', Boolean(need));
+    if (need) $('#verifyTo').textContent = S.me.email || 'your email';
+  }
+  $('#resendVerify').addEventListener('click', async () => {
+    try {
+      const data = await api('/api/auth/resend-verify');
+      toast('Sent! Check your inbox (and spam) and tap the link.', data.devLink ? { actions: [{ label: 'OPEN CONFIRM LINK (DEV)', cls: 'yellow', fn: () => (location.href = data.devLink) }] } : {});
+    } catch (err) {
+      toast(err.message, { bad: true });
+    }
+  });
+
+  $('#changeEmail').addEventListener('click', async () => {
+    const email = prompt('Which email should we send the confirm link to?', S.me.email || '');
+    if (!email || !email.trim()) return;
+    try {
+      const data = await api('/api/auth/change-email', { email: email.trim() });
+      toast(`Sent a new confirm link to ${email.trim()}.`, data.devLink ? { actions: [{ label: 'OPEN CONFIRM LINK (DEV)', cls: 'yellow', fn: () => (location.href = data.devLink) }] } : {});
+    } catch (err) {
+      toast(err.message, { bad: true });
+    }
+  });
+
   $('#logout').addEventListener('click', async () => {
+    // without a confirmed email, the confirm link is the only way back into this account
+    if (S.me && !S.me.emailVerified && !confirm("Your email isn't confirmed yet. After signing out, you can only get back in with the confirm link we emailed you. Sign out anyway?")) return;
     if (voice && voice.active) voice.leave(true);
     await api('/api/auth/logout');
     location.href = '/';
@@ -608,9 +673,18 @@
 
   // ---------------------------------------------------------------- boot
   (async function boot() {
-    const err = new URLSearchParams(location.search).get('error');
+    const q = new URLSearchParams(location.search);
+    const err = q.get('error');
     if (err) {
-      toast(err === 'link' ? 'That sign-in link expired or was already used.' : err === 'name' ? 'That name was taken. Pick another.' : 'Something went wrong.', { bad: true });
+      const msgs = {
+        link: 'That link expired or was already used.',
+        name: 'That name was taken. Pick another.',
+        emailtaken: 'That email is already confirmed on another Storm Royale account. Sign in with it to use that account, or confirm a different email.',
+      };
+      toast(msgs[err] || 'Something went wrong.', { bad: true });
+      history.replaceState(null, '', '/');
+    } else if (q.get('verified') === '1') {
+      toast('✅ Email confirmed! Typing and voice are unlocked.');
       history.replaceState(null, '', '/');
     }
     const res = await fetch('/api/me');

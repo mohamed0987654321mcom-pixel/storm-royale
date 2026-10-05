@@ -94,6 +94,19 @@ function readParentLink(token) {
   }
 }
 
+// "verify your email" links (for accounts made with "skip for now") are signed too, and last a week
+function createVerifyLink(uid, email) {
+  return jwt.sign({ k: 've', uid, email }, SECRET, { expiresIn: '7d' });
+}
+function readVerifyLink(token) {
+  try {
+    const p = jwt.verify(String(token || ''), SECRET);
+    return p.k === 've' ? { uid: p.uid, email: p.email } : null;
+  } catch {
+    return null;
+  }
+}
+
 function createLoginToken(data, minutes = LINK_MINUTES) {
   const token = crypto.randomBytes(24).toString('base64url');
   pending.set(token, { ...data, exp: Date.now() + minutes * 60 * 1000 });
@@ -150,6 +163,15 @@ function sendLoginEmail(email, link, isNew) {
   return sendEmail(email, isNew ? 'Create your Storm Royale account' : 'Your Storm Royale sign-in link', html, 'Sign-in link', link);
 }
 
+function sendVerifyEmail(email, name, link) {
+  const html = shell(`
+    <p style="font-size:16px">Confirm this email for your Storm Royale account <b>${esc(name)}</b>.</p>
+    <p style="font-size:14px;color:#c8d4ff;max-width:460px;margin:0 auto">Until you do, you can play, party up and use quick chat. Typing and voice unlock once your email is confirmed, and this link also signs you in on any device.</p>
+    ${button(link, 'CONFIRM MY EMAIL')}
+    <p style="font-size:12px;color:#9fb0e0">This link works for 7 days. If you didn't make this account, ignore this email.</p>`);
+  return sendEmail(email, 'Confirm your Storm Royale email', html, 'Verify-email link', link);
+}
+
 function sendParentConsentEmail(parentEmail, kidName, link) {
   const html = shell(`
     <p style="font-size:16px">Your child signed up for <b>Storm Royale</b> as <b>${esc(kidName)}</b> and asked for your permission.</p>
@@ -192,6 +214,9 @@ module.exports = {
   consumeLoginToken,
   createParentLink,
   readParentLink,
+  createVerifyLink,
+  readVerifyLink,
+  sendVerifyEmail,
   sendLoginEmail,
   sendParentConsentEmail,
   sendParentLoginEmail,

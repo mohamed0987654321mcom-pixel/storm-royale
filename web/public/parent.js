@@ -113,6 +113,9 @@
       toggle(kid, 'chat', 'Text chat', 'Typed messages with approved friends, checked by an AI moderator.'),
       toggle(kid, 'voice', 'Voice chat', 'Talking with approved friends. Speech is turned into text and checked; audio is never recorded.'),
     );
+    if (!kid.emailVerified) {
+      settings.append(h('p', { class: 'muted' }, `✉️ ${kid.name} hasn't confirmed their own email yet, so typing and voice stay off for them even when switched on here. Quick chat works.`));
+    }
     if (kid.consent !== 'verified') {
       settings.append(
         h('div', { class: 'verify-note' },

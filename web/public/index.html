@@ -48,6 +48,11 @@
           <label class="check"><input type="checkbox" id="rules"> I accept the <a href="#rules" id="rulesLink">community rules</a>, including AI safety checks on chat and voice.</label>
         </div>
         <button class="btn yellow big" type="submit" id="signinBtn">CONTINUE</button>
+        <div id="skipBox" hidden>
+          <button class="btn ghost skip-btn" type="button" id="skipBtn">SKIP EMAIL FOR NOW</button>
+          <p class="hint">Jump straight in! You can play, party up and use quick chat now. Typing and voice unlock once you confirm your email.</p>
+          <p class="hint">Made an account before and skipped this? <a href="#" id="resendByEmail">Send me its confirm link</a></p>
+        </div>
       </form>
       <p class="hint parent-link">Are you a parent? <a href="/parent">Open the parent page</a></p>
       <div id="checkEmail" hidden class="sent">
@@ -61,6 +66,13 @@
   </main>
 
   <!-- signed in -->
+  <div class="verify-bar" id="verifyBar" hidden>
+    <span>✉️ Confirm your email to unlock typing and voice. We sent a link to <b id="verifyTo"></b>.</span>
+    <span class="row-btns">
+      <button class="btn tiny" id="resendVerify" type="button">SEND AGAIN</button>
+      <button class="btn tiny ghost" id="changeEmail" type="button">CHANGE EMAIL</button>
+    </span>
+  </div>
   <main id="app" class="app" hidden>
     <!-- PARTY -->
     <section class="panel party view-party" id="partyPanel">

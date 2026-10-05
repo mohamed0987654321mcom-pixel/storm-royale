@@ -63,9 +63,12 @@ const needUser = (handler) => async (req, res) => {
   }
 };
 
+// only a CONFIRMED email counts (an unconfirmed "skip for now" email could be anyone's)
+const isAdminUser = (user) => Boolean(user.email) && user.emailVerified !== false && ADMINS.includes(user.email.toLowerCase());
+
 const needAdmin = (handler) =>
   needUser(async (req, res, user) => {
-    if (!ADMINS.includes(user.email.toLowerCase())) return res.status(403).json({ error: 'Admins only' });
+    if (!isAdminUser(user)) return res.status(403).json({ error: 'Admins only' });
     await handler(req, res, user);
   });
 
@@ -79,6 +82,24 @@ function sendAllowed(email) {
   emailSends.set(email, list);
   return true;
 }
+
+// "skip for now" makes an account without proving the email, so cap it per network
+const skips = new Map(); // ip -> [timestamps]
+function skipAllowed(ip) {
+  const now = Date.now();
+  const list = (skips.get(ip) || []).filter((t) => now - t < 3600e3);
+  if (list.length >= 5) return false;
+  list.push(now);
+  skips.set(ip, list);
+  return true;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const m of [emailSends, skips]) for (const [k, list] of m) if (!list.some((t) => now - t < 3600e3)) m.delete(k);
+}, 10 * 60e3).unref();
+
+const verifyLinkFor = (req, user, email) => `${baseUrl(req)}/auth/verify-email?token=${encodeURIComponent(auth.createVerifyLink(user.id, email))}`;
+const devOnly = (sent, link) => (!sent && process.env.DEV_SHOW_LINK === '1' ? { devLink: link } : {});
 
 app.post('/api/auth/start', async (req, res) => {
   try {
@@ -109,13 +130,32 @@ app.post('/api/auth/start', async (req, res) => {
       const group = age < auth.MIN_AGE ? 'kid' : age >= 18 ? 'adult' : 'teen';
       const v = await moderation.moderate(name, { kind: 'name', author: name, ageGroup: group });
       if (!v.allow) return res.status(400).json({ error: 'Please pick a different name' });
+
+      // "Skip for now": make the account and sign in right away; the email gets confirmed later.
+      // The email is only "pending" until then, so nobody can claim someone else's address.
+      if (req.body.skip === true) {
+        if (!skipAllowed(req.ip)) return res.status(429).json({ error: 'Too many new accounts from here. Confirm your email instead, or try again later.' });
+        let user;
+        try {
+          user = await db.createUser({ email: null, pendingEmail: email, emailVerified: false, name, birthDate: String(birthDate), parentEmail, consent: parentEmail ? 'pending' : 'none' });
+        } catch (err) {
+          if (err.code === '23505') return res.status(409).json({ error: 'That name is taken' });
+          throw err;
+        }
+        if (parentEmail) await parents.sendConsentRequest(user).catch((err) => console.error('[kids] consent email', err));
+        const link = verifyLinkFor(req, user, email);
+        let sent = false;
+        if (sendAllowed(email)) sent = await auth.sendVerifyEmail(email, user.name, link).catch((err) => (console.error('[auth] verify email', err), false));
+        auth.setSession(res, user.id);
+        return res.json({ ok: true, skipped: true, sent, ...devOnly(sent, link) });
+      }
       data = { email, name, birthDate: String(birthDate), parentEmail };
     }
     if (!sendAllowed(email)) return res.status(429).json({ error: 'Too many emails. Try again in an hour.' });
     const token = auth.createLoginToken(data);
     const link = `${baseUrl(req)}/auth/verify?token=${encodeURIComponent(token)}`;
     const sent = await auth.sendLoginEmail(email, link, !existing);
-    res.json({ ok: true, sent, ...(!sent && process.env.DEV_SHOW_LINK === '1' ? { devLink: link } : {}) });
+    res.json({ ok: true, sent, ...devOnly(sent, link) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Something went wrong' });
@@ -142,13 +182,88 @@ app.get('/auth/verify', async (req, res) => {
   }
 });
 
+// the link in the "confirm your email" email: confirms it and signs in (on any device)
+app.get('/auth/verify-email', async (req, res) => {
+  try {
+    const v = auth.readVerifyLink(req.query.token);
+    const user = v && (await db.findUserById(v.uid));
+    if (!user) return res.redirect('/?error=link');
+    if (user.emailVerified && user.email === v.email) {
+      auth.setSession(res, user.id); // already confirmed: just sign in
+      return res.redirect('/');
+    }
+    if (user.emailVerified || user.pendingEmail !== v.email) return res.redirect('/?error=link');
+    // someone already confirmed this email on another account: it's theirs
+    const owner = await db.findUserByEmail(v.email);
+    if (owner && owner.id !== user.id) return res.redirect('/?error=emailtaken');
+    try {
+      await db.updateUser(user.id, { email: v.email, pendingEmail: null, emailVerified: true });
+    } catch (err) {
+      if (err.code === '23505') return res.redirect('/?error=emailtaken');
+      throw err;
+    }
+    auth.setSession(res, user.id);
+    await rt.refreshUser(user.id);
+    res.redirect('/?verified=1');
+  } catch (err) {
+    console.error(err);
+    res.redirect('/?error=server');
+  }
+});
+
+// send the confirm link again: for the signed-in player, or by email (lost the cookie / new device)
+app.post('/api/auth/resend-verify', async (req, res) => {
+  try {
+    const uid = auth.readSession(req.headers.cookie);
+    const me = uid ? await db.findUserById(uid) : null;
+    let targets;
+    if (me && !req.body?.email) {
+      if (me.emailVerified) return res.status(400).json({ error: 'Your email is already confirmed' });
+      targets = [me];
+    } else {
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      if (!auth.validEmail(email)) return res.status(400).json({ error: 'Enter a valid email' });
+      targets = await db.findPendingByEmail(email);
+    }
+    let devLink = null;
+    for (const u of targets.slice(0, 3)) {
+      if (!u.pendingEmail || !sendAllowed(u.pendingEmail)) {
+        if (me && targets[0] === me) return res.status(429).json({ error: 'Too many emails. Try again in an hour.' });
+        break;
+      }
+      const link = verifyLinkFor(req, u, u.pendingEmail);
+      const sent = await auth.sendVerifyEmail(u.pendingEmail, u.name, link);
+      if (!sent) devLink = devLink || link;
+    }
+    // same answer whether or not that email has an account, so nobody can probe emails
+    res.json({ ok: true, ...(devLink && process.env.DEV_SHOW_LINK === '1' ? { devLink } : {}) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Something went wrong' });
+  }
+});
+
+// fix a typo'd email on a "skip for now" account (old confirm links stop working)
+app.post('/api/auth/change-email', needUser(async (req, res, user) => {
+  if (user.emailVerified) return res.status(400).json({ error: 'Your email is already confirmed' });
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!auth.validEmail(email)) return res.status(400).json({ error: 'Enter a valid email' });
+  if (user.parentEmail && email === user.parentEmail) return res.status(400).json({ error: "Use your own email, not your parent's" });
+  if (!sendAllowed(email)) return res.status(429).json({ error: 'Too many emails. Try again in an hour.' });
+  await db.updateUser(user.id, { pendingEmail: email });
+  const link = verifyLinkFor(req, user, email);
+  const sent = await auth.sendVerifyEmail(email, user.name, link);
+  await rt.refreshUser(user.id);
+  res.json({ ok: true, ...devOnly(sent, link) });
+}));
+
 app.post('/api/auth/logout', (req, res) => {
   auth.clearSession(res);
   res.json({ ok: true });
 });
 
 app.get('/api/me', needUser(async (req, res, user) => {
-  res.json({ id: user.id, name: user.name, email: user.email, ageGroup: auth.ageGroup(user), consent: user.consent, robloxName: user.robloxName, isAdmin: ADMINS.includes(user.email.toLowerCase()) });
+  res.json({ id: user.id, name: user.name, email: user.email || user.pendingEmail, emailVerified: user.emailVerified !== false, ageGroup: auth.ageGroup(user), consent: user.consent, robloxName: user.robloxName, isAdmin: isAdminUser(user) });
 }));
 
 const resends = new Map();

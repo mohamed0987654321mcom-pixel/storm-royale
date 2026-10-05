@@ -24,6 +24,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS kid_settings JSONB NOT NULL DEFAULT '
 ALTER TABLE users ADD COLUMN IF NOT EXISTS friends JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS age_verified BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS users_parent_email ON users (parent_email);
+-- "skip email check for now": the typed email waits in pending_email until it's verified
+ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_email TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT true;
+CREATE INDEX IF NOT EXISTS users_pending_email ON users (pending_email);
 CREATE TABLE IF NOT EXISTS reports (
   id SERIAL PRIMARY KEY,
   reporter_id INT,
@@ -58,6 +63,9 @@ const FIELDS = {
   kidSettings: 'kid_settings',
   friends: 'friends',
   ageVerified: 'age_verified',
+  email: 'email',
+  pendingEmail: 'pending_email',
+  emailVerified: 'email_verified',
 };
 const JSON_COLS = new Set(['blocked', 'stats', 'kid_settings', 'friends']);
 const REQ_FIELDS = { accepted: 'accepted', fromParentOk: 'from_parent_ok', toParentOk: 'to_parent_ok' };
@@ -81,6 +89,8 @@ function rowToUser(r) {
     kidSettings: { chat: false, voice: false, quick: true, ...(r.kid_settings || {}) },
     friends: r.friends || [],
     ageVerified: Boolean(r.age_verified),
+    pendingEmail: r.pending_email || null,
+    emailVerified: r.email_verified !== false,
     createdAt: new Date(r.created_at),
   };
 }
@@ -127,10 +137,11 @@ function pgStore(url) {
     findUsersByRoblox: async (ids) => (await many('SELECT * FROM users WHERE roblox_id = ANY($1::bigint[])', [ids])).map(rowToUser),
     findUsersByIds: async (ids) => (await many('SELECT * FROM users WHERE id = ANY($1::int[])', [ids])).map(rowToUser),
     findKidsByParent: async (email) => (await many('SELECT * FROM users WHERE parent_email = $1 ORDER BY id', [email])).map(rowToUser),
-    createUser: async ({ email, name, birthDate, parentEmail = null, consent = 'none' }) =>
+    findPendingByEmail: async (email) => (await many('SELECT * FROM users WHERE pending_email = $1 AND email_verified = false ORDER BY id LIMIT 5', [email])).map(rowToUser),
+    createUser: async ({ email, name, birthDate, parentEmail = null, consent = 'none', pendingEmail = null, emailVerified = true }) =>
       rowToUser(await one(
-        'INSERT INTO users (email, name, birth_date, parent_email, consent) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-        [email, name, birthDate, parentEmail, consent],
+        'INSERT INTO users (email, name, birth_date, parent_email, consent, pending_email, email_verified) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+        [email, name, birthDate, parentEmail, consent, pendingEmail, emailVerified],
       )),
     updateUser: async (id, fields) => {
       const sets = [];
@@ -204,10 +215,11 @@ function memoryStore() {
     findUsersByRoblox: async (ids) => users.filter((u) => ids.map(Number).includes(u.robloxId)).map(copy),
     findUsersByIds: async (ids) => users.filter((u) => ids.map(Number).includes(u.id)).map(copy),
     findKidsByParent: async (email) => users.filter((u) => u.parentEmail === email).map(copy),
-    createUser: async ({ email, name, birthDate, parentEmail = null, consent = 'none' }) => {
-      if (users.some((u) => u.email === email || u.name.toLowerCase() === name.toLowerCase())) throw Object.assign(new Error('duplicate'), { code: '23505' });
+    findPendingByEmail: async (email) => users.filter((u) => u.pendingEmail === email && !u.emailVerified).slice(0, 5).map(copy),
+    createUser: async ({ email, name, birthDate, parentEmail = null, consent = 'none', pendingEmail = null, emailVerified = true }) => {
+      if (users.some((u) => (email && u.email === email) || u.name.toLowerCase() === name.toLowerCase())) throw Object.assign(new Error('duplicate'), { code: '23505' });
       const u = {
-        id: nextUser++, email, name, birthDate, robloxId: null, robloxName: null, strikes: 0, bannedUntil: null, mutedUntil: null,
+        id: nextUser++, email: email || null, pendingEmail, emailVerified, name, birthDate, robloxId: null, robloxName: null, strikes: 0, bannedUntil: null, mutedUntil: null,
         blocked: [], stats: {}, parentEmail, consent, kidSettings: { chat: false, voice: false, quick: true }, friends: [], ageVerified: false, createdAt: new Date(),
       };
       users.push(u);
@@ -219,6 +231,7 @@ function memoryStore() {
       for (const [k, v] of Object.entries(fields)) {
         if (!FIELDS[k]) throw new Error('bad field ' + k);
         if (k === 'robloxId' && v != null && users.some((x) => x.robloxId === v && x.id !== id)) throw Object.assign(new Error('duplicate'), { code: '23505' });
+        if (k === 'email' && v != null && users.some((x) => x.email === v && x.id !== id)) throw Object.assign(new Error('duplicate'), { code: '23505' });
         u[k] = v;
       }
       return copy(u);

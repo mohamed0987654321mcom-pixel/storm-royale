@@ -44,12 +44,19 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
   const isKid = (o) => group(o) === 'kid';
   const kidApproved = (o) => ['basic', 'verified'].includes(o.user.consent);
   const kidLocked = (o) => isKid(o) && !kidApproved(o);
+  // canChat = may RECEIVE typed chat. Typing yourself (canType) and voice also need a confirmed email,
+  // so throwaway "skip for now" accounts can't be used to harass people or dodge bans.
+  const emailOk = (o) => o.user.emailVerified !== false;
   const canChat = (o) => !isKid(o) || (o.user.consent === 'verified' && o.user.kidSettings.chat === true);
-  const canVoice = (o) => !isKid(o) || (o.user.consent === 'verified' && o.user.kidSettings.voice === true);
+  const canType = (o) => canChat(o) && emailOk(o);
+  const voiceAllowed = (o) => !isKid(o) || (o.user.consent === 'verified' && o.user.kidSettings.voice === true);
+  const canVoice = (o) => emailOk(o) && voiceAllowed(o);
   const canQuick = (o) => !isKid(o) || (kidApproved(o) && o.user.kidSettings.quick !== false);
+  const VERIFY_TYPE_MSG = 'Confirm your email to type. Quick chat works now!';
+  const VERIFY_VOICE_MSG = 'Confirm your email to use voice chat.';
   // what this player may see from a room's chat history
   const visibleHistory = (o, hist) => (canChat(o) ? hist : canQuick(o) ? hist.filter((m) => m.quick) : []);
-  const isAdmin = (user) => admins.includes(String(user.email).toLowerCase());
+  const isAdmin = (user) => Boolean(user.email) && user.emailVerified !== false && admins.includes(String(user.email).toLowerCase());
   const isMuted = (user) => Boolean(user.mutedUntil && new Date(user.mutedUntil) > new Date());
   const currentRoom = (o) => (o.partyId ? `party-${o.partyId}` : isKid(o) ? `solo-${o.user.id}` : o.roomId);
   const freshGame = (o) => (o.game && Date.now() - o.game.at < GAME_FRESH_MS ? o.game.status : null);
@@ -108,7 +115,8 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
     return {
       id: u.id,
       name: u.name,
-      email: u.email,
+      email: u.email || u.pendingEmail || null,
+      emailVerified: emailOk(o),
       ageGroup: group(o),
       robloxId: u.robloxId,
       robloxName: u.robloxName,
@@ -117,8 +125,11 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
       strikes: u.strikes,
       stats: u.stats,
       isAdmin: isAdmin(u),
-      canChat: canChat(o),
+      canChat: canType(o),
       canVoice: canVoice(o),
+      // the only thing standing between them and typing / voice is confirming their email
+      typeNeedsEmail: canChat(o) && !emailOk(o),
+      voiceNeedsEmail: voiceAllowed(o) && !emailOk(o),
       canQuick: canQuick(o),
       ...(kid
         ? {
@@ -407,6 +418,7 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
       if (SAFETY_OFF) return reply({ ok: false, reason: SAFETY_MSG });
       if (kidLocked(o)) return reply({ ok: false, reason: LOCKED_MSG });
       if (!canChat(o)) return reply({ ok: false, reason: 'Chat is off. A parent can turn it on from the parent page.' });
+      if (!emailOk(o)) return reply({ ok: false, reason: VERIFY_TYPE_MSG });
       const room = currentRoom(o);
       if (room.startsWith('solo-')) return reply({ ok: false, reason: 'Party up with a friend to chat!' });
       if (isMuted(o.user)) return reply({ ok: false, reason: `You're muted until ${new Date(o.user.mutedUntil).toLocaleTimeString()}` });
@@ -570,6 +582,7 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
     on('voice:join', (_, reply) => {
       if (SAFETY_OFF) return reply({ ok: false, reason: SAFETY_MSG });
       if (kidLocked(o)) return reply({ ok: false, reason: LOCKED_MSG });
+      if (!emailOk(o)) return reply({ ok: false, reason: VERIFY_VOICE_MSG });
       if (!canVoice(o)) return reply({ ok: false, reason: 'Voice chat is off. A parent can turn it on from the parent page.' });
       const room = currentRoom(o);
       if (room.startsWith('solo-')) return reply({ ok: false, reason: 'Party up with a friend to use voice!' });

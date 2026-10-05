@@ -91,6 +91,7 @@ module.exports = function parentRoutes({ rt, publicUrl }) {
         name: k.name,
         stillKid: auth.ageGroup(k) === 'kid',
         consent: k.consent,
+        emailVerified: k.emailVerified !== false,
         settings: k.kidSettings,
         robloxName: k.robloxName,
         online: rt.isOnline(k.id),

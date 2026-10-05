@@ -108,6 +108,12 @@ Run locally: `cd web && npm install && DEV_SHOW_LINK=1 npm start` → http://loc
 | `KIDS_ENABLED` | `1` allows under-13 sign-ups (keep off until parent verification is connected) |
 | `KWS_ENABLED`, `KWS_CLIENT_ID`, `KWS_CLIENT_SECRET` | Phase 2: Epic Kids Web Services parent verification |
 
+### "Skip email for now"
+- New players can press **SKIP EMAIL FOR NOW** when signing up: the account is made and signed in at once, and a confirm link is emailed (works for 7 days, and can be sent again or sent to a corrected email)
+- Until the email is confirmed: play, parties and quick chat work; **typing and voice stay locked** (so throwaway accounts can't be used to harass people or dodge bans)
+- The email only counts once confirmed: it's stored as "pending", so skipping with someone else's email can't take it from them, and an unconfirmed email never gives admin access
+- Limited to 5 skipped sign-ups per network per hour
+
 ### Kids accounts (under 13)
 - Sign up with a parent's email; the account is locked until the parent approves it on **/parent**
 - No open lobbies: kids only party with friends that **both** kids and **both** parents approved; never with teens or adults

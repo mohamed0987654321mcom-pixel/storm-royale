@@ -247,6 +247,75 @@ const ask = (s, ev, payload) => new Promise((res) => s.emit(ev, payload || {}, r
   assert.equal(parseVerdict('no json here'), null);
   ok('Claude moderation replies are parsed safely');
 
+  // ================================================================ "skip email for now"
+  r = await post('/api/auth/start', { email: 'Skipper@test.com', name: 'SkipperTeen', birthDate: '2009-02-02', skip: true });
+  const sk = await r.json();
+  assert.equal(sk.skipped, true, JSON.stringify(sk));
+  assert.ok(sk.devLink && sk.devLink.includes('/auth/verify-email?token='));
+  const cS = r.headers.get('set-cookie').split(';')[0];
+  assert.match(cS, /^sr_session=/);
+  const sme = await pget('/api/me', cS);
+  assert.equal(sme.emailVerified, false);
+  assert.equal(sme.email, 'skipper@test.com');
+  const S1 = connect(cS);
+  await wait(300);
+  assert.equal(lastState(S1).me.canChat, false);
+  assert.equal(lastState(S1).me.typeNeedsEmail, true);
+  assert.equal(lastState(S1).me.voiceNeedsEmail, true);
+  r = await ask(S1, 'chat:send', { text: 'hello there' });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /confirm your email/i);
+  assert.equal((await ask(S1, 'voice:join')).ok, false);
+  assert.equal((await ask(S1, 'chat:quick', { id: 'hi' })).ok, true);
+  assert.equal((await ask(S1, 'party:create')).ok, true);
+  await ask(S1, 'party:leave');
+  ok('"skip for now" signs you in at once: play, party and quick chat work; typing and voice wait for the email');
+
+  r = await post('/api/auth/start', { email: 'admin@test.com', name: 'FakeAdmin', birthDate: '1990-01-01', skip: true });
+  const skAdmin = await r.json();
+  assert.equal(skAdmin.skipped, undefined, 'an email that already has an account gets a sign-in link instead');
+  assert.equal(r.headers.get('set-cookie'), null);
+  r = await post('/api/auth/start', { email: 'victim@test.com', name: 'Impostor1', birthDate: '2000-01-01', skip: true });
+  const imp = await r.json();
+  assert.equal(imp.skipped, true);
+  const cImp = r.headers.get('set-cookie').split(';')[0];
+  await signup('victim@test.com', 'RealVictim', '1999-01-01'); // the real owner can still sign up with it
+  let v = await fetch(imp.devLink, { redirect: 'manual' });
+  assert.equal(v.headers.get('location'), '/?error=emailtaken');
+  assert.equal((await pget('/api/me', cImp)).emailVerified, false);
+  ok("skipping can't take over an email: existing accounts get a sign-in link, and the real owner keeps theirs");
+
+  r = await post('/api/auth/resend-verify', { email: 'skipper@test.com' });
+  assert.ok((await r.json()).devLink, 'resend by email (lost the cookie / new device)');
+  r = await post('/api/auth/resend-verify', { email: 'nobody@test.com' });
+  const rn = await r.json();
+  assert.equal(rn.ok, true);
+  assert.equal(rn.devLink, undefined, 'same answer for unknown emails');
+  assert.equal((await post('/api/auth/resend-verify', {}, cS)).status, 200);
+  r = await post('/api/auth/change-email', { email: 'skipper2@test.com' }, cS);
+  const ch = await r.json();
+  assert.ok(ch.devLink, 'typo fix: confirm link goes to the new email');
+  v = await fetch(sk.devLink, { redirect: 'manual' });
+  assert.equal(v.headers.get('location'), '/?error=link', 'the old email link stops working');
+  v = await fetch(ch.devLink, { redirect: 'manual' });
+  assert.equal(v.headers.get('location'), '/?verified=1');
+  assert.match(v.headers.get('set-cookie'), /^sr_session=/, 'the confirm link signs you in');
+  await wait(200);
+  assert.equal(lastState(S1).me.emailVerified, true);
+  assert.equal(lastState(S1).me.canChat, true);
+  assert.equal(lastState(S1).me.email, 'skipper2@test.com');
+  assert.equal((await ask(S1, 'chat:send', { text: 'typing works now' })).ok, true);
+  assert.equal((await post('/api/auth/start', { email: 'skipper2@test.com' })).status, 200, 'the confirmed email signs in normally');
+  ok('resend, change a typo, and confirming unlocks typing + voice live (and signs you in)');
+
+  r = await post('/api/auth/start', { email: 'skidkid@test.com', name: 'SkipKid', birthDate: '2016-04-04', parentEmail: 'gran@test.com', skip: true });
+  assert.equal((await r.json()).skipped, true);
+  const gran = await parentLogin('gran@test.com');
+  const gk = (await pget('/api/parent/me', gran)).kids[0];
+  assert.equal(gk.consent, 'pending');
+  assert.equal(gk.emailVerified, false);
+  ok("kids can skip too: the parent still has to approve, and sees the kid's email isn't confirmed");
+
   // ================================================================ kids accounts
   const db = require('../lib/db');
   const cK1 = await kidSignup('k1@test.com', 'KidOne', '2016-03-03', 'mom@test.com');
@@ -367,7 +436,7 @@ const ask = (s, ev, payload) => new Promise((res) => s.emit(ev, payload || {}, r
   ok('parents can switch chat off any time, and deleting the account removes it and kicks the child out');
 
   console.log(`\nALL ${results.length} CHECKS PASSED`);
-  for (const s of [B, C, K1, K2]) s.close();
+  for (const s of [B, C, K1, K2, S1]) s.close();
   process.exit(0);
 })().catch((err) => {
   console.error('\nTEST FAILED:', err);
