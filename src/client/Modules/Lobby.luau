@@ -178,14 +178,26 @@ new("UIListLayout", { Padding = UDim.new(0, 1), VerticalAlignment = Enum.Vertica
 new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 4) }, partyChat)
 
 function Lobby.setWebParty(data)
-	local members = data and data.Members
-	if type(members) ~= "table" or #members == 0 then
+	-- not linked: show nothing (the game never points players to other sites)
+	if type(data) ~= "table" or data.Linked ~= true then
 		partyBox.Visible = false
 		return
 	end
 	partyBox.Visible = true
 	partyRows:ClearAllChildren()
 	new("UIListLayout", { Padding = UDim.new(0, 2) }, partyRows)
+	local members = data.Members
+	if type(members) ~= "table" or #members == 0 then
+		-- linked, but not in a party right now: a small card so it's clear the link works
+		partyBox.Size = UDim2.new(0, 300, 0, 100)
+		partyChat.Visible = false
+		text(partyRows, "✅ Account linked", UDim2.new(1, 0, 0, 24), UDim2.new(), FONT_B, 16, WHITE, Enum.TextXAlignment.Left)
+		local hint = text(partyRows, "Join a party there and it shows up here.", UDim2.new(1, 0, 0, 30), UDim2.new(), FONT_M, 13, Color3.fromRGB(170, 200, 255), Enum.TextXAlignment.Left)
+		hint.TextWrapped = true
+		return
+	end
+	partyBox.Size = UDim2.new(0, 300, 0, 250)
+	partyChat.Visible = true
 	for _, m in members do
 		local label = (m.Leader and "👑 " or "") .. tostring(m.Name) .. (m.Here and "  (here)" or "")
 		local row = new("Frame", { Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1 }, partyRows)
