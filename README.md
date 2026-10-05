@@ -90,7 +90,7 @@ Party, chat and voice site for players, deployed on Railway at **stormroyale.mpa
 - Email sign-in links (Resend); kids (under 13, parent-approved), teens and adults are kept apart everywhere
 - Parties of 4 with party chat + party voice; open lobby rooms when you're not in a party
 - Voice: WebRTC between players; your browser turns your speech into text for the AI safety check
-- Moderation: Claude Haiku 4.5 checks every chat message, name and voice transcript; strikes, mutes, reports, admin page at `/admin`
+- Moderation: one strict, all-ages standard for every player (see below); Claude Haiku 4.5 checks every chat message, name and voice transcript; admin page at `/admin`
 - Game link: players link Roblox by putting a code in their Roblox profile About; the game uses a secret API key (`x-api-key`) to show website parties + filtered party chat in the lobby and to send match stats
 
 Run locally: `cd web && npm install && DEV_SHOW_LINK=1 npm start` → http://localhost:3000 (sign-in links print in the terminal). Tests: `npm test`.
@@ -107,6 +107,14 @@ Run locally: `cd web && npm install && DEV_SHOW_LINK=1 npm start` → http://loc
 | `PUBLIC_URL` | the site's address, used in email links |
 | `KIDS_ENABLED` | `1` allows under-13 sign-ups (keep off until parent verification is connected) |
 | `KWS_ENABLED`, `KWS_CLIENT_ID`, `KWS_CLIENT_SECRET` | Phase 2: Epic Kids Web Services parent verification |
+
+### Strict moderation (a place for everyone)
+- Same rules for kids, teens and adults: no swearing (even disguised), no put-downs, nothing sexual, no dating talk, no personal info (age, location, school, photos), no other apps or "dm me", no scams or spam, no dodging the filter
+- A fast local filter catches links, emails, phone numbers and other-app names (also when written with look-alike or invisible characters); Claude checks everything else. If Claude is unsure, the message is just hidden (no penalty). If Claude can't be reached, nothing is shown
+- Strike ladder (`web/lib/penalties.js`): 3 warnings in an hour = 1 strike; serious = 1 strike; severe = 2 strikes. Strikes mute for 15 min → 1 h → 24 h → 3 days, then a 7-day ban. Grooming or sexual content = instant ban until reviewed. Admins can lift any of it
+- 3 different confirmed players reporting someone within 24 h mutes them for an hour while a moderator looks
+- The same message 3 times in a minute is blocked; voice always needs the speech safety check (no check = listen only)
+- Players do **not** do an age check. Only **parents** get verified (Phase 2, Epic KWS), so a fake parent can't unlock typing or voice for a kid
 
 ### "Skip email for now"
 - New players can press **SKIP EMAIL FOR NOW** when signing up: the account is made and signed in at once, and a confirm link is emailed (works for 7 days, and can be sent again or sent to a corrected email)

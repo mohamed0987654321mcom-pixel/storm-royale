@@ -10,7 +10,8 @@ const crypto = require('crypto');
 const { Server } = require('socket.io');
 const db = require('./db');
 const auth = require('./auth');
-const { moderate, enabled: moderationOn } = require('./moderation');
+const { moderate, clean, enabled: moderationOn } = require('./moderation');
+const penalties = require('./penalties');
 const quickchat = require('./quickchat');
 
 // never run chat/voice unmoderated on the live site
@@ -39,6 +40,11 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
   const recentByUser = new Map(); // userId -> [{room,name,text,ts}] (report context)
   const rate = new Map();
   const leaveTimers = new Map();
+  const warnings = new Map(); // userId -> [timestamps of warnings in the last hour]
+  const lastMsgs = new Map(); // userId -> [{ key, t }] (repeat-spam check)
+  const reportsAgainst = new Map(); // targetId -> Map(reporterId -> timestamp)
+  const REPORT_MUTE_AT = 3; // different players (with confirmed emails) reporting someone within 24 h
+  const REPORT_MUTE_MIN = 60;
 
   const group = (o) => auth.ageGroup(o.user);
   const isKid = (o) => group(o) === 'kid';
@@ -58,6 +64,8 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
   const visibleHistory = (o, hist) => (canChat(o) ? hist : canQuick(o) ? hist.filter((m) => m.quick) : []);
   const isAdmin = (user) => Boolean(user.email) && user.emailVerified !== false && admins.includes(String(user.email).toLowerCase());
   const isMuted = (user) => Boolean(user.mutedUntil && new Date(user.mutedUntil) > new Date());
+  // time left, not a clock time: the server's clock time would be in the wrong time zone for players
+  const mutedMsg = (user) => `You're muted for another ${penalties.describe(Math.max(1, Math.ceil((new Date(user.mutedUntil) - Date.now()) / 60000)))}`;
   const currentRoom = (o) => (o.partyId ? `party-${o.partyId}` : isKid(o) ? `solo-${o.user.id}` : o.roomId);
   const freshGame = (o) => (o.game && Date.now() - o.game.at < GAME_FRESH_MS ? o.game.status : null);
   const LOCKED_MSG = 'Your account is waiting for a parent to approve it.';
@@ -306,41 +314,94 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
     recentByUser.set(o.user.id, list);
   }
 
-  // convo: what was said in the room just before, so the admin sees the whole conversation
+  // tell everyone (and the player's own screens) that a player is muted now
+  function announceMute(o) {
+    const vr = o.voiceRoom;
+    if (vr) io.to(`r:${vr}`).emit('voice:muted', { userId: o.user.id, until: o.user.mutedUntil });
+    pushState(o);
+    broadcastRoom(currentRoom(o));
+  }
+
+  // kick a banned player out everywhere (after they've had a moment to see why)
+  function removeBanned(o) {
+    leaveVoice(o);
+    leaveParty(o);
+    setTimeout(() => {
+      for (const s of o.sockets) s.disconnect(true);
+    }, 400);
+  }
+
+  // Strict ladder (see penalties.js). convo: what was said in the room just before, for the admin
   async function punish(o, verdict, content, room, isVoice, convo = []) {
     if (verdict.category === 'unavailable') return;
-    if (verdict.category === 'self_harm') {
+    if (verdict.category === 'self_harm' && verdict.severity < 3) {
       systemMsg(o, "💙 It sounds like things might be hard right now. You're not alone. Please talk to someone you trust, or reach out to a local helpline.");
       return;
     }
     const sev = verdict.severity;
+    const uid = o.user.id;
+    let add = penalties.strikesFor(verdict);
+    let warnText = '';
+    if (sev === 1) {
+      const now = Date.now();
+      const list = (warnings.get(uid) || []).filter((t) => now - t < penalties.WARNING_WINDOW_MS);
+      list.push(now);
+      if (list.length >= penalties.WARNINGS_PER_STRIKE) {
+        add += 1;
+        warnings.delete(uid);
+      } else {
+        warnings.set(uid, list);
+        const left = penalties.WARNINGS_PER_STRIKE - list.length;
+        warnText = ` Warning ${list.length} of ${penalties.WARNINGS_PER_STRIKE}: ${left === 1 ? 'one more' : `${left} more`} within an hour means a mute.`;
+      }
+    }
+
     const changes = {};
     let muteMin = 0;
-    if (sev >= 2) {
-      changes.strikes = (o.user.strikes || 0) + 1;
-      muteMin = sev >= 3 ? 24 * 60 : 10;
-      if (changes.strikes % 3 === 0) muteMin = Math.max(muteMin, 30);
-    } else if (isVoice && sev >= 1) {
-      muteMin = 2;
+    let banDays = 0;
+    if (add) {
+      changes.strikes = (o.user.strikes || 0) + add;
+      const p = penalties.penaltyFor(changes.strikes);
+      muteMin = p.muteMin || 0;
+      banDays = p.banDays || 0;
     }
-    if (muteMin) changes.mutedUntil = new Date(Date.now() + muteMin * 60000);
-    if (Object.keys(changes).length) o.user = await db.updateUser(o.user.id, changes);
-    if (sev >= 2) {
+    if (penalties.instantBan(verdict)) banDays = Math.max(banDays, penalties.BAN_DAYS);
+    if (isVoice && sev >= 1 && !muteMin && !banDays) muteMin = penalties.VOICE_MIN_MUTE;
+    if (banDays) changes.bannedUntil = new Date(Date.now() + banDays * 86400e3);
+    else if (muteMin) changes.mutedUntil = new Date(Date.now() + muteMin * 60000);
+    if (Object.keys(changes).length) o.user = await db.updateUser(uid, changes);
+
+    if (sev >= 2 || add || banDays) {
       await db.addReport({
-        targetId: o.user.id,
-        reason: `AI moderation: ${verdict.category} (${verdict.reason})`,
+        targetId: uid,
+        reason: `${banDays ? '🚨 AUTO-BAN · ' : ''}AI moderation: ${verdict.category} (${verdict.reason || `severity ${sev}`})${changes.strikes ? ` · strike ${changes.strikes}` : ''}`,
         source: 'ai',
         context: [...convo.slice(-8), { name: o.user.name, text: content, ts: Date.now(), blocked: true }],
       });
     }
+
     const what = isVoice ? 'Something you said in voice' : 'Your message';
-    systemMsg(o, `⚠️ ${what} was blocked: ${verdict.reason || verdict.category}.${muteMin ? ` You're muted for ${muteMin >= 60 ? Math.round(muteMin / 60) + ' h' : muteMin + ' min'}.` : ''}`);
-    if (muteMin) {
-      const vr = o.voiceRoom;
-      if (vr) io.to(`r:${vr}`).emit('voice:muted', { userId: o.user.id, until: o.user.mutedUntil });
-      pushState(o);
-      broadcastRoom(currentRoom(o));
+    const why = verdict.reason || verdict.category;
+    if (banDays) {
+      systemMsg(o, `⛔ ${what} broke the rules: ${why}. Your account is banned for ${banDays} days. A moderator will review it.`);
+      removeBanned(o);
+      return;
     }
+    const muted = muteMin ? ` You're muted for ${penalties.describe(muteMin)}.` : '';
+    const hidden = sev === 0 ? `🙈 ${what} wasn't shown: ${why}.` : `⚠️ ${what} was blocked: ${why}.`;
+    systemMsg(o, `${hidden}${muted}${muted ? '' : warnText}`);
+    if (muteMin) announceMute(o);
+  }
+
+  // the same message over and over is spam (3rd time within a minute is blocked)
+  function repeatOk(uid, text) {
+    const now = Date.now();
+    const key = text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '') || text;
+    const list = (lastMsgs.get(uid) || []).filter((m) => now - m.t < 60000);
+    if (list.filter((m) => m.key === key).length >= 2) return false;
+    list.push({ key, t: now });
+    lastMsgs.set(uid, list.slice(-12));
+    return true;
   }
 
   function rateOk(uid) {
@@ -413,7 +474,7 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
     });
 
     on('chat:send', async ({ text }, reply) => {
-      text = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      text = clean(text).replace(/\s+/g, ' ').trim().slice(0, 200);
       if (!text) return reply({ ok: false });
       if (SAFETY_OFF) return reply({ ok: false, reason: SAFETY_MSG });
       if (kidLocked(o)) return reply({ ok: false, reason: LOCKED_MSG });
@@ -421,8 +482,9 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
       if (!emailOk(o)) return reply({ ok: false, reason: VERIFY_TYPE_MSG });
       const room = currentRoom(o);
       if (room.startsWith('solo-')) return reply({ ok: false, reason: 'Party up with a friend to chat!' });
-      if (isMuted(o.user)) return reply({ ok: false, reason: `You're muted until ${new Date(o.user.mutedUntil).toLocaleTimeString()}` });
+      if (isMuted(o.user)) return reply({ ok: false, reason: mutedMsg(o.user) });
       if (!rateOk(uid)) return reply({ ok: false, reason: 'Slow down a little!' });
+      if (!repeatOk(uid, text)) return reply({ ok: false, reason: "Please don't repeat the same message" });
       const hist = history.get(room) || [];
       const verdict = await moderate(text, {
         kind: 'chat',
@@ -452,8 +514,9 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
       if (!canQuick(o)) return reply({ ok: false, reason: 'Quick chat is off. A parent can turn it on from the parent page.' });
       const room = currentRoom(o);
       if (room.startsWith('solo-')) return reply({ ok: false, reason: 'Party up with a friend to chat!' });
-      if (isMuted(o.user)) return reply({ ok: false, reason: `You're muted until ${new Date(o.user.mutedUntil).toLocaleTimeString()}` });
+      if (isMuted(o.user)) return reply({ ok: false, reason: mutedMsg(o.user) });
       if (!rateOk(uid)) return reply({ ok: false, reason: 'Slow down a little!' });
+      if (!repeatOk(uid, `quick:${phrase.id}`)) return reply({ ok: false, reason: "Please don't repeat the same message" });
       const msg = { id: crypto.randomUUID(), room, from: { id: uid, name: o.user.name, robloxId: o.user.robloxId }, text: phrase.text, quick: true, ts: Date.now() };
       const hist = history.get(room) || [];
       hist.push(msg);
@@ -637,6 +700,31 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
       // a report made by a kid also goes to their parent
       if (isKid(o) && o.user.parentEmail) {
         notifyParent(o.user.parentEmail, `${o.user.name} reported a player`, `${o.user.name} reported ${target.name} on Storm Royale. Our moderators will review it. You can see your child's friends and settings on the parent page.`).catch(() => {});
+      }
+      // several different players reporting the same person: mute them until a moderator looks
+      // (only confirmed accounts count, so throwaway accounts can't gang up on someone)
+      if (emailOk(o)) {
+        const now = Date.now();
+        const byReporter = reportsAgainst.get(target.id) || new Map();
+        byReporter.set(uid, now);
+        for (const [rid, t] of byReporter) if (now - t > 24 * 3600e3) byReporter.delete(rid);
+        reportsAgainst.set(target.id, byReporter);
+        if (byReporter.size >= REPORT_MUTE_AT && !isMuted(target)) {
+          byReporter.clear();
+          const updated = await db.updateUser(target.id, { mutedUntil: new Date(now + REPORT_MUTE_MIN * 60000) });
+          await db.addReport({
+            targetId: target.id,
+            reason: `${REPORT_MUTE_AT} players reported them within 24 h: auto-muted for ${penalties.describe(REPORT_MUTE_MIN)}`,
+            source: 'ai',
+            context: (recentByUser.get(target.id) || []).slice(-10),
+          });
+          const to = online.get(target.id);
+          if (to) {
+            to.user = updated;
+            systemMsg(to, `🔇 Several players reported you, so you're muted for ${penalties.describe(REPORT_MUTE_MIN)} while a moderator takes a look.`);
+            announceMute(to);
+          }
+        }
       }
       reply({ ok: true });
     });

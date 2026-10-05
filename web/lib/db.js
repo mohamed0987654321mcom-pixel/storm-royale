@@ -22,6 +22,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_email TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS consent TEXT NOT NULL DEFAULT 'none';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS kid_settings JSONB NOT NULL DEFAULT '{"chat":false,"voice":false}';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS friends JSONB NOT NULL DEFAULT '[]';
+-- (age_verified: left over from a dropped plan to age-check every player; unused)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS age_verified BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS users_parent_email ON users (parent_email);
 -- "skip email check for now": the typed email waits in pending_email until it's verified
@@ -62,7 +63,6 @@ const FIELDS = {
   consent: 'consent',
   kidSettings: 'kid_settings',
   friends: 'friends',
-  ageVerified: 'age_verified',
   email: 'email',
   pendingEmail: 'pending_email',
   emailVerified: 'email_verified',
@@ -88,7 +88,6 @@ function rowToUser(r) {
     consent: r.consent || 'none',
     kidSettings: { chat: false, voice: false, quick: true, ...(r.kid_settings || {}) },
     friends: r.friends || [],
-    ageVerified: Boolean(r.age_verified),
     pendingEmail: r.pending_email || null,
     emailVerified: r.email_verified !== false,
     createdAt: new Date(r.created_at),
@@ -220,7 +219,7 @@ function memoryStore() {
       if (users.some((u) => (email && u.email === email) || u.name.toLowerCase() === name.toLowerCase())) throw Object.assign(new Error('duplicate'), { code: '23505' });
       const u = {
         id: nextUser++, email: email || null, pendingEmail, emailVerified, name, birthDate, robloxId: null, robloxName: null, strikes: 0, bannedUntil: null, mutedUntil: null,
-        blocked: [], stats: {}, parentEmail, consent, kidSettings: { chat: false, voice: false, quick: true }, friends: [], ageVerified: false, createdAt: new Date(),
+        blocked: [], stats: {}, parentEmail, consent, kidSettings: { chat: false, voice: false, quick: true }, friends: [], createdAt: new Date(),
       };
       users.push(u);
       return copy(u);

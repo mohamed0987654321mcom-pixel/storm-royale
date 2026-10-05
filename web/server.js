@@ -351,6 +351,7 @@ app.post('/api/admin/reports/:id', needAdmin(async (req, res) => {
     await rt.refreshUser(Number(targetId));
   } else if (action === 'unban') {
     await db.updateUser(Number(targetId), { bannedUntil: null, mutedUntil: null });
+    await rt.refreshUser(Number(targetId)); // lifts a mute live, no reload needed
   }
   await db.setReportStatus(Number(req.params.id), 'closed');
   res.json({ ok: true });

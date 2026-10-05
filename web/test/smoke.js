@@ -9,14 +9,26 @@ process.env.ADMIN_EMAILS = 'admin@test.com';
 process.env.JWT_SECRET = 'test-secret';
 process.env.KIDS_ENABLED = '1';
 delete process.env.DATABASE_URL;
-delete process.env.ANTHROPIC_API_KEY;
+process.env.ANTHROPIC_API_KEY = 'test-key'; // Claude is faked below
 delete process.env.RESEND_API_KEY;
+
+// fake Claude moderator: allows everything except test markers in the NEW message
+function fakeClaude(opts) {
+  const content = JSON.parse(opts.body).messages[0].content;
+  const fresh = content.split('<<<')[1] || '';
+  let v = { allow: true, category: 'ok', severity: 0, reason: '' };
+  if (fresh.includes('GROOMTEST')) v = { allow: false, category: 'grooming', severity: 3, reason: 'asks to keep secrets' };
+  else if (fresh.includes('MEANTEST')) v = { allow: false, category: 'harassment', severity: 2, reason: 'insults a player' };
+  else if (fresh.includes('UNSURETEST')) v = { allow: false, category: 'other', severity: 0, reason: 'not sure about this' };
+  return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(v) }] }), { status: 200 });
+}
 
 // fake Roblox's public API so account linking can be tested offline
 let robloxBio = '';
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, opts) => {
   const u = String(url);
+  if (u.includes('api.anthropic.com')) return fakeClaude(opts);
   if (u.includes('users.roblox.com/v1/usernames/users')) return new Response(JSON.stringify({ data: [{ id: 111, name: 'RobloxAce' }] }), { status: 200 });
   if (u.includes('users.roblox.com/v1/users/111')) return new Response(JSON.stringify({ id: 111, description: robloxBio }), { status: 200 });
   return realFetch(url, opts);
@@ -247,6 +259,93 @@ const ask = (s, ev, payload) => new Promise((res) => s.emit(ev, payload || {}, r
   assert.equal(parseVerdict('no json here'), null);
   ok('Claude moderation replies are parsed safely');
 
+  // ================================================================ strict moderation
+  const pen = require('../lib/penalties');
+  assert.deepEqual([1, 2, 3, 4].map((n) => pen.penaltyFor(n).muteMin), [15, 60, 1440, 4320]);
+  assert.equal(pen.penaltyFor(5).banDays, 7);
+  assert.equal(pen.instantBan({ severity: 3, category: 'grooming' }), true);
+  assert.equal(pen.instantBan({ severity: 3, category: 'violence' }), false);
+  const { localCheck } = require('../lib/moderation');
+  for (const bad of ['add me on snapchat', 'my insta is cool_kid', 'discord dot gg slash abc', 'ｄｉｓｃｏｒｄ', 'dis​cord']) assert.equal(localCheck(bad)?.allow, false, bad);
+  assert.equal(localCheck('oh snap nice shot'), null);
+  ok('strict ladder; local filter catches other apps, "dot com" links and look-alike / invisible letters');
+
+  const cW = await signup('w@test.com', 'WarnMe', '2001-01-01');
+  const W = connect(cW);
+  await wait(300);
+  assert.equal((await ask(W, 'chat:send', { text: 'gg wp' })).ok, true);
+  assert.equal((await ask(W, 'chat:send', { text: 'GG WP!' })).ok, true);
+  r = await ask(W, 'chat:send', { text: 'gg  wp' });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /repeat/);
+  ok('the same message 3 times in a minute is blocked as spam');
+
+  await ask(W, 'chat:send', { text: 'add me on snapchat' });
+  await ask(W, 'chat:send', { text: 'whats app me later' });
+  await wait(100);
+  assert.ok(got(W, 'chat:system', (m) => /Warning 2 of 3/.test(m.text)));
+  assert.equal(lastState(W).me.mutedUntil, null);
+  await ask(W, 'chat:send', { text: 'my insta is cool' });
+  await wait(150);
+  const wMe = lastState(W).me;
+  assert.equal(wMe.strikes, 1, 'third warning in an hour = a strike');
+  const wMins = (new Date(wMe.mutedUntil) - Date.now()) / 60000;
+  assert.ok(wMins > 14 && wMins <= 15, `15-minute mute, got ${wMins}`);
+  assert.match((await ask(W, 'chat:send', { text: 'hello' })).reason, /muted for another 15 min/);
+  ok('3 warnings within an hour = a strike and a 15-minute mute');
+
+  const cM = await signup('m@test.com', 'MeanOne', '2000-02-02');
+  const M = connect(cM);
+  await wait(300);
+  assert.equal((await ask(M, 'chat:send', { text: 'UNSURETEST maybe' })).ok, false);
+  await wait(100);
+  assert.equal(lastState(M).me.strikes, 0);
+  assert.equal(lastState(M).me.mutedUntil, null);
+  assert.ok(got(M, 'chat:system', (m) => m.text.startsWith('🙈')));
+  ok('when Claude is unsure, the message is just hidden with no penalty');
+
+  await ask(M, 'chat:send', { text: 'MEANTEST you are trash' });
+  await wait(150);
+  assert.equal(lastState(M).me.strikes, 1);
+  const mRep = (await pget('/api/admin/reports', cAdmin)).reports.find((x) => x.targetName === 'MeanOne');
+  assert.match(mRep.reason, /strike 1/);
+  await post(`/api/admin/reports/${mRep.id}`, { action: 'unban', targetId: mRep.targetId }, cAdmin);
+  await wait(150);
+  assert.equal(lastState(M).me.mutedUntil, null, 'admin lifts the mute live');
+  await ask(M, 'chat:send', { text: 'MEANTEST again' });
+  await wait(150);
+  assert.equal(lastState(M).me.strikes, 2);
+  const mMins = (new Date(lastState(M).me.mutedUntil) - Date.now()) / 60000;
+  assert.ok(mMins > 59 && mMins <= 60, `1-hour mute, got ${mMins}`);
+  ok('each strike mutes for longer (15 min, then 1 h), and admins can lift it');
+
+  const cG = await signup('g@test.com', 'Creepy', '1985-03-03');
+  const G = connect(cG);
+  await wait(300);
+  const gGone = new Promise((res) => G.on('disconnect', res));
+  await ask(G, 'chat:send', { text: 'GROOMTEST keep it secret' });
+  await gGone;
+  assert.ok(got(G, 'chat:system', (m) => /banned for 7 days/.test(m.text)));
+  const G2 = io(BASE, { extraHeaders: { cookie: cG }, transports: ['websocket'], forceNew: true });
+  assert.equal(await new Promise((res) => G2.on('connect_error', (e) => res(e.message))), 'banned');
+  G2.close();
+  assert.ok((await pget('/api/admin/reports', cAdmin)).reports.some((x) => x.targetName === 'Creepy' && x.reason.startsWith('🚨 AUTO-BAN')));
+  ok('grooming or sexual messages are an instant ban, flagged for a moderator');
+
+  const cT = await signup('t@test.com', 'TrollTeen', '2009-09-09');
+  const T = connect(cT);
+  const AD = connect(cAdmin);
+  await wait(300);
+  const tid = lastState(T).me.id;
+  for (const s of [B, C]) assert.equal((await ask(s, 'user:report', { userId: tid, reason: 'mean' })).ok, true);
+  await wait(100);
+  assert.equal(lastState(T).me.mutedUntil, null, 'two reports are not enough');
+  await ask(AD, 'user:report', { userId: tid, reason: 'mean' });
+  await wait(150);
+  assert.ok(lastState(T).me.mutedUntil, 'three different players = muted');
+  assert.ok(got(T, 'chat:system', (m) => /Several players reported you/.test(m.text)));
+  ok('3 different players reporting someone mutes them until a moderator looks');
+
   // ================================================================ "skip email for now"
   r = await post('/api/auth/start', { email: 'Skipper@test.com', name: 'SkipperTeen', birthDate: '2009-02-02', skip: true });
   const sk = await r.json();
@@ -436,7 +535,7 @@ const ask = (s, ev, payload) => new Promise((res) => s.emit(ev, payload || {}, r
   ok('parents can switch chat off any time, and deleting the account removes it and kicks the child out');
 
   console.log(`\nALL ${results.length} CHECKS PASSED`);
-  for (const s of [B, C, K1, K2, S1]) s.close();
+  for (const s of [B, C, K1, K2, S1, W, M, T, AD]) s.close();
   process.exit(0);
 })().catch((err) => {
   console.error('\nTEST FAILED:', err);

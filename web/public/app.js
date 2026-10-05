@@ -496,15 +496,16 @@
     btn.className = `btn big ${voice.active ? 'danger' : 'yellow'}`;
     $('#micBtn').hidden = !voice.active;
     $('#micBtn').textContent = voice.micOn ? '🎤 MIC ON' : '🔇 MIC OFF';
-    const open = S.room.kind === 'open';
-    const kid = S.me.ageGroup === 'kid';
     btn.disabled = !S.me.canVoice && !voice.active;
     let hint = 'Voice is checked for safety: your browser turns your speech into text and an AI moderator reads it. Audio is never recorded.';
     if (S.me.voiceNeedsEmail) hint = '✉️ Confirm your email to use voice chat. The link is in your inbox.';
     else if (!S.me.canVoice) hint = '🔒 Voice chat is off. A parent can turn it on from the parent page.';
-    else if (S.me.mutedUntil) hint = `🔇 You're muted until ${new Date(S.me.mutedUntil).toLocaleTimeString()}.`;
-    else if (kid && (!window.VoiceClient.canModerate || voice.transcribeFailed)) hint = "This browser can't run the voice safety check, so you can listen but not talk. Use Chrome or Safari.";
-    else if (open && (!window.VoiceClient.canModerate || voice.transcribeFailed)) hint = "This browser can't run the voice safety check, so you can listen but not talk in open lobbies. Use Chrome or Safari, or talk in a party.";
+    else if (S.me.mutedUntil) {
+      const until = new Date(S.me.mutedUntil);
+      const far = until - Date.now() > 20 * 3600e3;
+      hint = `🔇 You're muted until ${far ? until.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : until.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+    }
+    else if (!window.VoiceClient.canModerate || voice.transcribeFailed) hint = "This browser can't run the voice safety check, so you can listen but not talk. Use Chrome or Safari.";
     $('#voiceHint').textContent = hint;
     renderMembers();
   }
@@ -522,7 +523,8 @@
   $('#voiceBtn').addEventListener('click', async () => {
     if (voice.active) return voice.leave(true);
     try {
-      await voice.join({ myId: S.me.id, roomId: S.room.id, requireTranscript: S.room.kind === 'open' || S.me.ageGroup === 'kid', mutedUntil: S.me.mutedUntil });
+      // strict moderation: everyone's speech is checked, in parties too (no check = listen only)
+      await voice.join({ myId: S.me.id, roomId: S.room.id, requireTranscript: true, mutedUntil: S.me.mutedUntil });
     } catch (err) {
       toast(err.name === 'NotAllowedError' ? 'Allow microphone access to join voice' : err.message, { bad: true });
     }
