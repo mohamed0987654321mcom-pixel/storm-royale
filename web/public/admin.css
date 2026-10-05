@@ -13,3 +13,5 @@
 .logo.home { text-decoration: none; }
 .pill.tag { margin-left: 12px; cursor: default; }
 .live { margin-left: auto; }
+.report .group { font-size: 11px; font-weight: 900; padding: 3px 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.1); }
+.report .group.kid { background: rgba(255, 79, 109, 0.25); color: #ffb3c0; }

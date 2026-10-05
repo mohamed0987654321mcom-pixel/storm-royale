@@ -59,6 +59,10 @@
       body.name = $('#name').value.trim();
       body.birthDate = $('#birth').value;
       if (!body.name || !body.birthDate) return toast('Fill in your name and birth date', { bad: true });
+      if (!$('#parentField').hidden) {
+        body.parentEmail = $('#parentEmail').value.trim();
+        if (!body.parentEmail) return toast("Enter your parent's email", { bad: true });
+      }
     }
     const btn = $('#signinBtn');
     btn.disabled = true;
@@ -70,6 +74,12 @@
         $('#signinTitle').textContent = 'CREATE ACCOUNT';
         $('#signinSub').textContent = "Welcome! Pick a display name. Don't use your real name.";
         $('#name').focus();
+        return;
+      }
+      if (data.needParent) {
+        $('#parentField').hidden = false;
+        $('#parentEmail').focus();
+        toast("You're under 13, so a parent needs to say OK. Add their email.");
         return;
       }
       $('#signinForm').hidden = true;
@@ -165,9 +175,75 @@
     renderMembers();
     renderVoice();
     const p = S.room.kind === 'party';
-    $('#roomTitle').textContent = p ? 'PARTY CHAT' : `${S.room.title.toUpperCase()} · ${S.me.ageGroup === 'teen' ? 'TEENS' : '18+'}`;
-    $('#roomPick').hidden = p;
+    const groupLabel = { teen: 'TEENS', adult: '18+' }[S.me.ageGroup] || '';
+    $('#roomTitle').textContent = p ? 'PARTY CHAT' : S.room.kind === 'solo' ? 'CHAT' : `${S.room.title.toUpperCase()} · ${groupLabel}`;
+    $('#roomPick').hidden = p || S.room.kind === 'solo';
+    $('#chatLocked').hidden = S.me.canChat;
+    $('#chatForm').hidden = !S.me.canChat;
+    renderKid();
   }
+
+  // ---------------------------------------------------------------- kids accounts
+  function renderKid() {
+    const kid = S.me.kid;
+    $('#kidLocked').hidden = !(kid && kid.locked);
+    $('#kidFriends').hidden = !kid || kid.locked;
+    $('#inviteForm').hidden = Boolean(kid);
+    if (kid && kid.locked) {
+      $('#partyNone').hidden = true;
+      $('#partyHint').hidden = true;
+    } else if (kid && !S.room.party) {
+      $('#partyHint').textContent = 'Create a party, then invite your friends from the list below.';
+    }
+    if (!kid) return;
+    const inParty = Boolean(S.room.party);
+    const partyIds = new Set(inParty ? S.room.party.members.map((m) => m.id) : []);
+    const rows = [];
+    for (const r of kid.requests.filter((x) => x.incoming && !x.accepted)) {
+      rows.push(h('li', {},
+        h('span', { class: 'nm' }, `👋 ${r.name}`),
+        h('button', { class: 'btn yellow', onclick: () => emit('friend:respond', { requestId: r.id, accept: true }).then(() => toast(`Your parents will be asked to OK ${r.name}`)) }, 'ACCEPT'),
+        h('button', { class: 'btn ghost', onclick: () => emit('friend:respond', { requestId: r.id, accept: false }) }, 'NO'),
+      ));
+    }
+    for (const r of kid.requests.filter((x) => x.waitingParents || (!x.incoming && !x.accepted))) {
+      rows.push(h('li', {},
+        h('span', { class: 'nm' }, r.name),
+        h('span', { class: 'st' }, r.waitingParents ? 'Waiting for parents ✋' : 'Request sent'),
+      ));
+    }
+    for (const f of kid.friends) {
+      rows.push(h('li', {},
+        h('span', { class: `dot ${f.online ? 'on' : ''}`, title: f.online ? 'Online' : 'Offline' }),
+        h('span', { class: 'nm' }, f.name),
+        inParty && f.online && !partyIds.has(f.id)
+          ? h('button', { class: 'btn yellow', onclick: () => emit('party:invite', { userId: f.id }).then((r) => toast(r.ok ? `Invite sent to ${f.name}` : r.reason || "Couldn't invite", { bad: !r.ok })) }, 'INVITE')
+          : null,
+      ));
+    }
+    if (!rows.length) rows.push(h('li', { class: 'muted' }, 'No friends yet. Add one by name!'));
+    $('#friendList').replaceChildren(...rows);
+  }
+
+  $('#friendForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('#friendName').value.trim();
+    if (!name) return;
+    const r = await emit('friend:request', { name });
+    if (r.ok) {
+      $('#friendName').value = '';
+      toast(`If ${name} has a kids account, they'll get your request 👋`);
+    } else toast(r.reason || "Couldn't send", { bad: true });
+  });
+
+  $('#resendParent').addEventListener('click', async () => {
+    try {
+      await api('/api/kid/resend-parent');
+      toast('Sent! Ask your parent to check their email (and spam).');
+    } catch (err) {
+      toast(err.message, { bad: true });
+    }
+  });
 
   function renderMe() {
     const chip = $('#meChip');
@@ -283,7 +359,7 @@
   function renderMessages() {
     const box = $('#messages');
     box.replaceChildren(...S.history.filter((m) => !isBlocked(m.from.id)).map(msgEl));
-    if (!S.history.length) box.append(h('div', { class: 'msg system' }, S.room.kind === 'party' ? 'Party chat: only your squad can see this.' : 'Say hi to the lobby 👋'));
+    if (!S.history.length) box.append(h('div', { class: 'msg system' }, S.room.kind === 'party' ? 'Party chat: only your squad can see this.' : S.room.kind === 'solo' ? 'Party up with a friend to chat!' : 'Say hi to the lobby 👋'));
     scrollIfNear(box, true);
   }
 
@@ -349,8 +425,12 @@
     $('#micBtn').hidden = !voice.active;
     $('#micBtn').textContent = voice.micOn ? '🎤 MIC ON' : '🔇 MIC OFF';
     const open = S.room.kind === 'open';
+    const kid = S.me.ageGroup === 'kid';
+    btn.disabled = !S.me.canVoice && !voice.active;
     let hint = 'Voice is checked for safety: your browser turns your speech into text and an AI moderator reads it. Audio is never recorded.';
-    if (S.me.mutedUntil) hint = `🔇 You're muted until ${new Date(S.me.mutedUntil).toLocaleTimeString()}.`;
+    if (!S.me.canVoice) hint = '🔒 Voice chat is off. A parent can turn it on from the parent page.';
+    else if (S.me.mutedUntil) hint = `🔇 You're muted until ${new Date(S.me.mutedUntil).toLocaleTimeString()}.`;
+    else if (kid && (!window.VoiceClient.canModerate || voice.transcribeFailed)) hint = "This browser can't run the voice safety check, so you can listen but not talk. Use Chrome or Safari.";
     else if (open && (!window.VoiceClient.canModerate || voice.transcribeFailed)) hint = "This browser can't run the voice safety check, so you can listen but not talk in open lobbies. Use Chrome or Safari, or talk in a party.";
     $('#voiceHint').textContent = hint;
     renderMembers();
@@ -369,7 +449,7 @@
   $('#voiceBtn').addEventListener('click', async () => {
     if (voice.active) return voice.leave(true);
     try {
-      await voice.join({ myId: S.me.id, roomId: S.room.id, requireTranscript: S.room.kind === 'open', mutedUntil: S.me.mutedUntil });
+      await voice.join({ myId: S.me.id, roomId: S.room.id, requireTranscript: S.room.kind === 'open' || S.me.ageGroup === 'kid', mutedUntil: S.me.mutedUntil });
     } catch (err) {
       toast(err.name === 'NotAllowedError' ? 'Allow microphone access to join voice' : err.message, { bad: true });
     }

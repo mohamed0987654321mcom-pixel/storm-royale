@@ -8,6 +8,7 @@ const auth = require('./lib/auth');
 const moderation = require('./lib/moderation');
 const attachRealtime = require('./lib/realtime');
 const gameRoutes = require('./lib/game');
+const parentRoutes = require('./lib/parents');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMINS = String(process.env.ADMIN_EMAILS || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
@@ -34,7 +35,15 @@ app.use((req, res, next) => {
 });
 
 const server = http.createServer(app);
-const rt = attachRealtime(server, { iceServers: iceServers(), admins: ADMINS });
+const publicUrl = () => process.env.PUBLIC_URL || `http://localhost:${PORT}`;
+let parents = null; // parent page API (created after realtime, which needs its email helper)
+const rt = attachRealtime(server, {
+  iceServers: iceServers(),
+  admins: ADMINS,
+  notifyParent: (...args) => parents.notifyParent(...args),
+});
+parents = parentRoutes({ rt, publicUrl });
+app.use(parents.router);
 
 const baseUrl = (req) => process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
 
@@ -86,11 +95,21 @@ app.post('/api/auth/start', async (req, res) => {
       if (!auth.validName(name)) return res.status(400).json({ error: 'Name: 3–20 letters, numbers or _' });
       const age = auth.ageFrom(String(birthDate));
       if (age < 0 || age > 120) return res.status(400).json({ error: 'Enter a real birth date' });
-      if (age < auth.MIN_AGE) return res.status(403).json({ error: `Storm Royale's website is for players ${auth.MIN_AGE} and older` });
+      let parentEmail = null;
+      if (age < auth.MIN_AGE) {
+        // kids accounts: only with a parent's permission (and only once switched on)
+        if (!auth.KIDS_ENABLED) return res.status(403).json({ error: `Storm Royale's website is for players ${auth.MIN_AGE} and older for now. Kids accounts are coming soon!` });
+        if (age < auth.KID_MIN_AGE) return res.status(403).json({ error: `Players need to be at least ${auth.KID_MIN_AGE}` });
+        parentEmail = String(req.body.parentEmail || '').trim().toLowerCase();
+        if (!parentEmail) return res.json({ needParent: true });
+        if (!auth.validEmail(parentEmail)) return res.status(400).json({ error: "Enter your parent's email" });
+        if (parentEmail === email) return res.status(400).json({ error: "Use your parent's own email, not yours" });
+      }
       if (await db.findUserByName(name)) return res.status(409).json({ error: 'That name is taken' });
-      const v = await moderation.moderate(name, { kind: 'name', author: name, ageGroup: age >= 18 ? 'adult' : 'teen' });
+      const group = age < auth.MIN_AGE ? 'kid' : age >= 18 ? 'adult' : 'teen';
+      const v = await moderation.moderate(name, { kind: 'name', author: name, ageGroup: group });
       if (!v.allow) return res.status(400).json({ error: 'Please pick a different name' });
-      data = { email, name, birthDate: String(birthDate) };
+      data = { email, name, birthDate: String(birthDate), parentEmail };
     }
     if (!sendAllowed(email)) return res.status(429).json({ error: 'Too many emails. Try again in an hour.' });
     const token = auth.createLoginToken(data);
@@ -111,7 +130,9 @@ app.get('/auth/verify', async (req, res) => {
     if (!user) {
       if (!data.name) return res.redirect('/?error=link');
       if (await db.findUserByName(data.name)) return res.redirect('/?error=name');
-      user = await db.createUser({ email: data.email, name: data.name, birthDate: data.birthDate });
+      const kid = Boolean(data.parentEmail);
+      user = await db.createUser({ email: data.email, name: data.name, birthDate: data.birthDate, parentEmail: data.parentEmail || null, consent: kid ? 'pending' : 'none' });
+      if (kid) await parents.sendConsentRequest(user).catch((err) => console.error('[kids] consent email', err));
     }
     auth.setSession(res, user.id);
     res.redirect('/');
@@ -127,7 +148,17 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', needUser(async (req, res, user) => {
-  res.json({ id: user.id, name: user.name, email: user.email, ageGroup: auth.ageGroup(user), robloxName: user.robloxName, isAdmin: ADMINS.includes(user.email.toLowerCase()) });
+  res.json({ id: user.id, name: user.name, email: user.email, ageGroup: auth.ageGroup(user), consent: user.consent, robloxName: user.robloxName, isAdmin: ADMINS.includes(user.email.toLowerCase()) });
+}));
+
+const resends = new Map();
+app.post('/api/kid/resend-parent', needUser(async (req, res, user) => {
+  if (auth.ageGroup(user) !== 'kid' || user.consent !== 'pending' || !user.parentEmail) return res.status(400).json({ error: 'Nothing to resend' });
+  const last = resends.get(user.id) || 0;
+  if (Date.now() - last < 10 * 60e3) return res.status(429).json({ error: 'We just sent it. Ask your parent to check their inbox (and spam).' });
+  resends.set(user.id, Date.now());
+  await parents.sendConsentRequest(user);
+  res.json({ ok: true });
 }));
 
 // ------------------------------------------------------------------ link Roblox account
@@ -181,10 +212,16 @@ app.get('/api/admin/reports', needAdmin(async (req, res) => {
   const names = new Map();
   for (const r of reports) {
     for (const id of [r.targetId, r.reporterId]) {
-      if (id && !names.has(id)) names.set(id, (await db.findUserById(id))?.name || `#${id}`);
+      if (id && !names.has(id)) {
+        const u = await db.findUserById(id);
+        names.set(id, u ? { name: u.name, group: auth.ageGroup(u) } : null);
+      }
     }
   }
-  res.json({ reports: reports.map((r) => ({ ...r, targetName: names.get(r.targetId), reporterName: r.reporterId ? names.get(r.reporterId) : 'AI moderator' })), live: rt.stats() });
+  res.json({
+    reports: reports.map((r) => ({ ...r, targetName: names.get(r.targetId)?.name || `#${r.targetId}`, targetGroup: names.get(r.targetId)?.group, reporterName: r.reporterId ? names.get(r.reporterId)?.name || `#${r.reporterId}` : 'AI moderator' })),
+    live: rt.stats(),
+  });
 }));
 
 app.post('/api/admin/reports/:id', needAdmin(async (req, res) => {
@@ -209,6 +246,7 @@ app.use('/api/game', gameRoutes(rt));
 app.get('/health', (req, res) => res.json({ ok: true, db: db.kind, moderation: moderation.enabled ? moderation.model : 'off', ...rt.stats() }));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('/parent', (req, res) => res.sendFile(path.join(__dirname, 'public', 'parent.html')));
 
 db.init()
   .then(() => {

@@ -17,6 +17,13 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS users_name_lower ON users (lower(name));
+-- kids accounts (under 13)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_email TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS consent TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS kid_settings JSONB NOT NULL DEFAULT '{"chat":false,"voice":false}';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS friends JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS age_verified BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS users_parent_email ON users (parent_email);
 CREATE TABLE IF NOT EXISTS reports (
   id SERIAL PRIMARY KEY,
   reporter_id INT,
@@ -26,6 +33,16 @@ CREATE TABLE IF NOT EXISTS reports (
   context JSONB NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'open',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS friend_requests (
+  id SERIAL PRIMARY KEY,
+  from_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  to_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  accepted BOOLEAN NOT NULL DEFAULT false,
+  from_parent_ok BOOLEAN NOT NULL DEFAULT false,
+  to_parent_ok BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (from_id, to_id)
 );
 `;
 
@@ -37,7 +54,13 @@ const FIELDS = {
   mutedUntil: 'muted_until',
   blocked: 'blocked',
   stats: 'stats',
+  consent: 'consent',
+  kidSettings: 'kid_settings',
+  friends: 'friends',
+  ageVerified: 'age_verified',
 };
+const JSON_COLS = new Set(['blocked', 'stats', 'kid_settings', 'friends']);
+const REQ_FIELDS = { accepted: 'accepted', fromParentOk: 'from_parent_ok', toParentOk: 'to_parent_ok' };
 
 function rowToUser(r) {
   if (!r) return null;
@@ -53,6 +76,11 @@ function rowToUser(r) {
     mutedUntil: r.muted_until ? new Date(r.muted_until) : null,
     blocked: r.blocked || [],
     stats: r.stats || {},
+    parentEmail: r.parent_email || null,
+    consent: r.consent || 'none',
+    kidSettings: { chat: false, voice: false, ...(r.kid_settings || {}) },
+    friends: r.friends || [],
+    ageVerified: Boolean(r.age_verified),
     createdAt: new Date(r.created_at),
   };
 }
@@ -70,49 +98,102 @@ function rowToReport(r) {
   };
 }
 
+function rowToRequest(r) {
+  return {
+    id: r.id,
+    fromId: r.from_id,
+    toId: r.to_id,
+    accepted: r.accepted,
+    fromParentOk: r.from_parent_ok,
+    toParentOk: r.to_parent_ok,
+    createdAt: new Date(r.created_at),
+  };
+}
+
 function pgStore(url) {
   const pool = new Pool({
     connectionString: url,
     ssl: /sslmode=require/.test(url) ? { rejectUnauthorized: false } : undefined,
   });
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0];
-  return {
+  const many = async (sql, args) => (await pool.query(sql, args)).rows;
+  const store = {
     kind: 'postgres',
     init: () => pool.query(SCHEMA),
     findUserByEmail: async (email) => rowToUser(await one('SELECT * FROM users WHERE email = $1', [email])),
     findUserById: async (id) => rowToUser(await one('SELECT * FROM users WHERE id = $1', [id])),
     findUserByName: async (name) => rowToUser(await one('SELECT * FROM users WHERE lower(name) = lower($1)', [name])),
     findUserByRoblox: async (rid) => rowToUser(await one('SELECT * FROM users WHERE roblox_id = $1', [rid])),
-    findUsersByRoblox: async (ids) => (await pool.query('SELECT * FROM users WHERE roblox_id = ANY($1::bigint[])', [ids])).rows.map(rowToUser),
-    createUser: async ({ email, name, birthDate }) =>
-      rowToUser(await one('INSERT INTO users (email, name, birth_date) VALUES ($1, $2, $3) RETURNING *', [email, name, birthDate])),
+    findUsersByRoblox: async (ids) => (await many('SELECT * FROM users WHERE roblox_id = ANY($1::bigint[])', [ids])).map(rowToUser),
+    findUsersByIds: async (ids) => (await many('SELECT * FROM users WHERE id = ANY($1::int[])', [ids])).map(rowToUser),
+    findKidsByParent: async (email) => (await many('SELECT * FROM users WHERE parent_email = $1 ORDER BY id', [email])).map(rowToUser),
+    createUser: async ({ email, name, birthDate, parentEmail = null, consent = 'none' }) =>
+      rowToUser(await one(
+        'INSERT INTO users (email, name, birth_date, parent_email, consent) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        [email, name, birthDate, parentEmail, consent],
+      )),
     updateUser: async (id, fields) => {
       const sets = [];
       const args = [];
       for (const [k, v] of Object.entries(fields)) {
         const col = FIELDS[k];
         if (!col) throw new Error('bad field ' + k);
-        args.push(col === 'blocked' || col === 'stats' ? JSON.stringify(v) : v);
+        args.push(JSON_COLS.has(col) ? JSON.stringify(v) : v);
         sets.push(`${col} = $${args.length}`);
       }
       args.push(id);
       return rowToUser(await one(`UPDATE users SET ${sets.join(', ')} WHERE id = $${args.length} RETURNING *`, args));
     },
+    deleteUser: async (id) => {
+      // drop them from everyone's friends list (friend requests go via ON DELETE CASCADE)
+      await pool.query(`UPDATE users SET friends = (SELECT COALESCE(jsonb_agg(f), '[]') FROM jsonb_array_elements(friends) f WHERE f <> to_jsonb($1::int)) WHERE friends @> to_jsonb($1::int)`, [id]);
+      await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    },
+    stalePendingKids: async (days) =>
+      (await many(`SELECT * FROM users WHERE consent = 'pending' AND created_at < now() - ($1 || ' days')::interval`, [String(days)])).map(rowToUser),
     addReport: async ({ reporterId, targetId, reason, source, context }) =>
       rowToReport(await one(
         'INSERT INTO reports (reporter_id, target_id, reason, source, context) VALUES ($1, $2, $3, $4, $5) RETURNING *',
         [reporterId || null, targetId, reason, source || 'user', JSON.stringify(context || [])],
       )),
     listReports: async (status) =>
-      (await pool.query('SELECT * FROM reports WHERE status = $1 ORDER BY created_at DESC LIMIT 200', [status])).rows.map(rowToReport),
+      (await many('SELECT * FROM reports WHERE status = $1 ORDER BY created_at DESC LIMIT 200', [status])).map(rowToReport),
     setReportStatus: async (id, status) => { await pool.query('UPDATE reports SET status = $1 WHERE id = $2', [status, id]); },
+    // friend requests (kids)
+    addFriendRequest: async (fromId, toId) =>
+      rowToRequest(await one('INSERT INTO friend_requests (from_id, to_id) VALUES ($1, $2) ON CONFLICT (from_id, to_id) DO UPDATE SET from_id = EXCLUDED.from_id RETURNING *', [fromId, toId])),
+    findFriendRequest: async (id) => { const r = await one('SELECT * FROM friend_requests WHERE id = $1', [id]); return r ? rowToRequest(r) : null; },
+    findFriendRequestBetween: async (a, b) => {
+      const r = await one('SELECT * FROM friend_requests WHERE (from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1)', [a, b]);
+      return r ? rowToRequest(r) : null;
+    },
+    listFriendRequestsFor: async (ids) =>
+      (await many('SELECT * FROM friend_requests WHERE from_id = ANY($1::int[]) OR to_id = ANY($1::int[]) ORDER BY id', [ids])).map(rowToRequest),
+    updateFriendRequest: async (id, fields) => {
+      const sets = [];
+      const args = [];
+      for (const [k, v] of Object.entries(fields)) {
+        if (!REQ_FIELDS[k]) throw new Error('bad field ' + k);
+        args.push(v);
+        sets.push(`${REQ_FIELDS[k]} = $${args.length}`);
+      }
+      args.push(id);
+      const r = await one(`UPDATE friend_requests SET ${sets.join(', ')} WHERE id = $${args.length} RETURNING *`, args);
+      return r ? rowToRequest(r) : null;
+    },
+    deleteFriendRequest: async (id) => { await pool.query('DELETE FROM friend_requests WHERE id = $1', [id]); },
   };
+  return store;
 }
 
 function memoryStore() {
-  const users = [];
+  let users = [];
   const reports = [];
-  const copy = (u) => (u ? { ...u, blocked: [...u.blocked], stats: { ...u.stats } } : null);
+  let requests = [];
+  let nextUser = 1;
+  let nextReq = 1;
+  const copy = (u) => (u ? { ...u, blocked: [...u.blocked], stats: { ...u.stats }, kidSettings: { ...u.kidSettings }, friends: [...u.friends] } : null);
+  const copyReq = (r) => (r ? { ...r } : null);
   return {
     kind: 'memory',
     init: async () => {},
@@ -121,9 +202,14 @@ function memoryStore() {
     findUserByName: async (name) => copy(users.find((u) => u.name.toLowerCase() === String(name).toLowerCase())),
     findUserByRoblox: async (rid) => copy(users.find((u) => u.robloxId === Number(rid))),
     findUsersByRoblox: async (ids) => users.filter((u) => ids.map(Number).includes(u.robloxId)).map(copy),
-    createUser: async ({ email, name, birthDate }) => {
+    findUsersByIds: async (ids) => users.filter((u) => ids.map(Number).includes(u.id)).map(copy),
+    findKidsByParent: async (email) => users.filter((u) => u.parentEmail === email).map(copy),
+    createUser: async ({ email, name, birthDate, parentEmail = null, consent = 'none' }) => {
       if (users.some((u) => u.email === email || u.name.toLowerCase() === name.toLowerCase())) throw Object.assign(new Error('duplicate'), { code: '23505' });
-      const u = { id: users.length + 1, email, name, birthDate, robloxId: null, robloxName: null, strikes: 0, bannedUntil: null, mutedUntil: null, blocked: [], stats: {}, createdAt: new Date() };
+      const u = {
+        id: nextUser++, email, name, birthDate, robloxId: null, robloxName: null, strikes: 0, bannedUntil: null, mutedUntil: null,
+        blocked: [], stats: {}, parentEmail, consent, kidSettings: { chat: false, voice: false }, friends: [], ageVerified: false, createdAt: new Date(),
+      };
       users.push(u);
       return copy(u);
     },
@@ -137,6 +223,12 @@ function memoryStore() {
       }
       return copy(u);
     },
+    deleteUser: async (id) => {
+      users = users.filter((u) => u.id !== id);
+      for (const u of users) u.friends = u.friends.filter((f) => f !== id);
+      requests = requests.filter((r) => r.fromId !== id && r.toId !== id);
+    },
+    stalePendingKids: async (days) => users.filter((u) => u.consent === 'pending' && Date.now() - u.createdAt.getTime() > days * 86400e3).map(copy),
     addReport: async (r) => {
       const rep = { id: reports.length + 1, reporterId: r.reporterId || null, targetId: r.targetId, reason: r.reason, source: r.source || 'user', context: r.context || [], status: 'open', createdAt: new Date() };
       reports.push(rep);
@@ -144,6 +236,27 @@ function memoryStore() {
     },
     listReports: async (status) => reports.filter((r) => r.status === status).reverse(),
     setReportStatus: async (id, status) => { const r = reports.find((x) => x.id === id); if (r) r.status = status; },
+    addFriendRequest: async (fromId, toId) => {
+      let r = requests.find((x) => x.fromId === fromId && x.toId === toId);
+      if (!r) {
+        r = { id: nextReq++, fromId, toId, accepted: false, fromParentOk: false, toParentOk: false, createdAt: new Date() };
+        requests.push(r);
+      }
+      return copyReq(r);
+    },
+    findFriendRequest: async (id) => copyReq(requests.find((r) => r.id === id)),
+    findFriendRequestBetween: async (a, b) => copyReq(requests.find((r) => (r.fromId === a && r.toId === b) || (r.fromId === b && r.toId === a))),
+    listFriendRequestsFor: async (ids) => requests.filter((r) => ids.includes(r.fromId) || ids.includes(r.toId)).map(copyReq),
+    updateFriendRequest: async (id, fields) => {
+      const r = requests.find((x) => x.id === id);
+      if (!r) return null;
+      for (const [k, v] of Object.entries(fields)) {
+        if (!REQ_FIELDS[k]) throw new Error('bad field ' + k);
+        r[k] = v;
+      }
+      return copyReq(r);
+    },
+    deleteFriendRequest: async (id) => { requests = requests.filter((r) => r.id !== id); },
   };
 }
 

@@ -41,6 +41,7 @@
         h('div', { class: `report ${rep.source}` },
           h('div', { class: 'head' },
             h('span', { class: 'who' }, rep.targetName),
+            rep.targetGroup ? h('span', { class: `group ${rep.targetGroup}` }, { kid: 'KID (UNDER 13)', teen: 'TEEN', adult: 'ADULT' }[rep.targetGroup]) : null,
             h('span', { class: 'muted' }, `reported by ${rep.reporterName}`),
             h('span', { class: 'muted' }, new Date(rep.createdAt).toLocaleString()),
           ),

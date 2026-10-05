@@ -1,5 +1,10 @@
-// Realtime: open rooms, parties, text chat, WebRTC voice signalling, moderation actions.
+// Realtime: open rooms, parties, text chat, WebRTC voice signalling, kids' friends, moderation actions.
 // Everything here is in memory: parties and chat are live-only, like a game lobby.
+//
+// Age groups (auth.ageGroup): 'kid' (under 13), 'teen' (13-17), 'adult' (18+). They never mix:
+//   • teens and adults have their own open lobbies; parties belong to one age group
+//   • kids have NO open lobbies: they only party with friends that both kids' parents approved
+//   • kids can only chat / use voice if a verified parent turned it on (and only then do they receive chat)
 const crypto = require('crypto');
 const { Server } = require('socket.io');
 const db = require('./db');
@@ -10,35 +15,44 @@ const { moderate, enabled: moderationOn } = require('./moderation');
 const SAFETY_OFF = !moderationOn && process.env.NODE_ENV === 'production';
 const SAFETY_MSG = 'Chat and voice turn on as soon as safety moderation is set up.';
 
-const OPEN_ROOMS = 4; // per age group
+const OPEN_ROOMS = 4; // per teen/adult group
 const VOICE_MAX = 10;
 const PARTY_MAX = 4;
 const HISTORY = 60;
 const GAME_FRESH_MS = 30000;
+const MAX_PENDING_REQUESTS = 20;
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-const openRoomIds = (group) => Array.from({ length: OPEN_ROOMS }, (_, i) => `open-${group}-${i + 1}`);
+const openRoomIds = (group) => (group === 'kid' ? [] : Array.from({ length: OPEN_ROOMS }, (_, i) => `open-${group}-${i + 1}`));
 
-function attach(httpServer, { iceServers, admins }) {
+function attach(httpServer, { iceServers, admins, notifyParent = async () => {} }) {
   const io = new Server(httpServer, { maxHttpBufferSize: 1e5, cors: { origin: false } });
 
-  const online = new Map(); // userId -> { user, sockets:Set, partyId, roomId, voiceSocket, voiceRoom, game }
-  const parties = new Map(); // partyId -> { id, code, leaderId, members:[uid], ready:Set }
+  const online = new Map(); // userId -> { user, sockets:Set, partyId, roomId, voiceSocket, voiceRoom, game, friendList, requests }
+  const parties = new Map(); // partyId -> { id, code, leaderId, members:[uid], ready:Set, ageGroup }
   const partyByCode = new Map();
   const history = new Map(); // roomId -> [msg]
-  const transcripts = new Map(); // roomId -> [{name,text}]
+  const transcripts = new Map(); // roomId -> [{name,text,ts}]
   const voiceRooms = new Map(); // roomId -> Map(userId -> socketId)
-  const recentByUser = new Map(); // userId -> [{room,text,ts}] (report context)
+  const recentByUser = new Map(); // userId -> [{room,name,text,ts}] (report context)
   const rate = new Map();
   const leaveTimers = new Map();
 
+  const group = (o) => auth.ageGroup(o.user);
+  const isKid = (o) => group(o) === 'kid';
+  const kidApproved = (o) => ['basic', 'verified'].includes(o.user.consent);
+  const kidLocked = (o) => isKid(o) && !kidApproved(o);
+  const canChat = (o) => !isKid(o) || (o.user.consent === 'verified' && o.user.kidSettings.chat === true);
+  const canVoice = (o) => !isKid(o) || (o.user.consent === 'verified' && o.user.kidSettings.voice === true);
   const isAdmin = (user) => admins.includes(String(user.email).toLowerCase());
   const isMuted = (user) => Boolean(user.mutedUntil && new Date(user.mutedUntil) > new Date());
-  const currentRoom = (o) => (o.partyId ? `party-${o.partyId}` : o.roomId);
+  const currentRoom = (o) => (o.partyId ? `party-${o.partyId}` : isKid(o) ? `solo-${o.user.id}` : o.roomId);
   const freshGame = (o) => (o.game && Date.now() - o.game.at < GAME_FRESH_MS ? o.game.status : null);
+  const LOCKED_MSG = 'Your account is waiting for a parent to approve it.';
 
   function roomTitle(roomId) {
     if (roomId.startsWith('party-')) return 'Party';
+    if (roomId.startsWith('solo-')) return 'Home';
     const m = /^open-(teen|adult)-(\d+)$/.exec(roomId);
     return m ? `Lobby ${m[2]}` : roomId;
   }
@@ -74,7 +88,7 @@ function attach(httpServer, { iceServers, admins }) {
     const p = roomId.startsWith('party-') ? parties.get(roomId.slice(6)) : null;
     return {
       id: roomId,
-      kind: p ? 'party' : 'open',
+      kind: p ? 'party' : roomId.startsWith('solo-') ? 'solo' : 'open',
       title: roomTitle(roomId),
       members: membersOf(roomId).map(pub),
       party: p ? partyInfo(p) : null,
@@ -85,11 +99,12 @@ function attach(httpServer, { iceServers, admins }) {
 
   function meInfo(o) {
     const u = o.user;
+    const kid = isKid(o);
     return {
       id: u.id,
       name: u.name,
       email: u.email,
-      ageGroup: auth.ageGroup(u),
+      ageGroup: group(o),
       robloxId: u.robloxId,
       robloxName: u.robloxName,
       blocked: u.blocked,
@@ -97,17 +112,38 @@ function attach(httpServer, { iceServers, admins }) {
       strikes: u.strikes,
       stats: u.stats,
       isAdmin: isAdmin(u),
+      canChat: canChat(o),
+      canVoice: canVoice(o),
+      ...(kid
+        ? {
+          kid: {
+            consent: u.consent,
+            locked: kidLocked(o),
+            friends: (o.friendList || []).map((f) => ({ ...f, online: Boolean(online.get(f.id)?.sockets.size) })),
+            requests: o.requests || [],
+          },
+        }
+        : {}),
     };
+  }
+
+  // kids who can't chat sit in the "nochat" socket room, which chat broadcasts skip
+  function syncChatFlag(o) {
+    const allowed = canChat(o);
+    for (const s of o.sockets) {
+      if (allowed) s.leave('nochat');
+      else s.join('nochat');
+    }
   }
 
   function pushState(o) {
     const room = currentRoom(o);
-    const group = auth.ageGroup(o.user);
+    syncChatFlag(o);
     io.to(`u:${o.user.id}`).emit('state', {
       me: meInfo(o),
       room: roomInfo(room),
-      history: history.get(room) || [],
-      rooms: openRoomIds(group).map((id) => ({ id, title: roomTitle(id), count: membersOf(id).length })),
+      history: canChat(o) ? history.get(room) || [] : [],
+      rooms: openRoomIds(group(o)).map((id) => ({ id, title: roomTitle(id), count: membersOf(id).length })),
       iceServers,
     });
   }
@@ -118,6 +154,46 @@ function attach(httpServer, { iceServers, admins }) {
 
   function systemMsg(o, text) {
     io.to(`u:${o.user.id}`).emit('chat:system', { text, ts: Date.now() });
+  }
+
+  // ---------------------------------------------------------------- kids: friends + requests
+  async function loadKidExtras(o) {
+    if (!isKid(o)) {
+      o.friendList = [];
+      o.requests = [];
+      return;
+    }
+    const uid = o.user.id;
+    const reqs = await db.listFriendRequestsFor([uid]);
+    const ids = [...new Set([...o.user.friends, ...reqs.map((r) => (r.fromId === uid ? r.toId : r.fromId))])];
+    const users = ids.length ? await db.findUsersByIds(ids) : [];
+    const names = new Map(users.map((u) => [u.id, u.name]));
+    o.friendList = o.user.friends.filter((id) => names.has(id)).map((id) => ({ id, name: names.get(id) }));
+    o.requests = reqs
+      .filter((r) => names.has(r.fromId === uid ? r.toId : r.fromId))
+      .map((r) => {
+        const incoming = r.toId === uid;
+        return {
+          id: r.id,
+          name: names.get(incoming ? r.fromId : r.toId),
+          incoming,
+          accepted: r.accepted,
+          waitingParents: r.accepted && !(r.fromParentOk && r.toParentOk),
+        };
+      });
+  }
+
+  async function refreshUser(uid, { extras = true } = {}) {
+    const o = online.get(uid);
+    if (!o) return;
+    const fresh = await db.findUserById(uid);
+    if (!fresh) return;
+    o.user = fresh;
+    if (extras) await loadKidExtras(o);
+    if (o.voiceSocket && !canVoice(o)) leaveVoice(o);
+    if (o.partyId && kidLocked(o)) leaveParty(o);
+    pushState(o);
+    broadcastRoom(currentRoom(o));
   }
 
   // ---------------------------------------------------------------- voice
@@ -135,7 +211,7 @@ function attach(httpServer, { iceServers, admins }) {
     broadcastRoom(room);
   }
 
-  // move a user between rooms (open room <-> party), keeping sockets + voice consistent
+  // move a user between rooms (open room / home <-> party), keeping sockets + voice consistent
   function relocate(o, change) {
     const before = currentRoom(o);
     change();
@@ -191,6 +267,13 @@ function attach(httpServer, { iceServers, admins }) {
       const m = online.get(id);
       if (m && m !== o) systemMsg(m, `${o.user.name} joined the party`);
     }
+  }
+
+  // can `o` be in party `p`? (same age group; for kids, everyone in it must be their approved friend)
+  function mayJoin(o, p) {
+    if (p.ageGroup !== group(o)) return false;
+    if (isKid(o)) return kidApproved(o) && p.members.every((id) => o.user.friends.includes(id));
+    return true;
   }
 
   // ---------------------------------------------------------------- moderation actions
@@ -267,7 +350,7 @@ function attach(httpServer, { iceServers, admins }) {
     let o = online.get(uid);
     if (!o) {
       const user = await db.findUserById(uid);
-      o = { user, sockets: new Set(), partyId: null, roomId: openRoomIds(auth.ageGroup(user))[0], voiceSocket: null, voiceRoom: null, game: null };
+      o = { user, sockets: new Set(), partyId: null, roomId: openRoomIds(auth.ageGroup(user))[0] || null, voiceSocket: null, voiceRoom: null, game: null, friendList: [], requests: [] };
       online.set(uid, o);
     }
     clearTimeout(leaveTimers.get(uid));
@@ -275,8 +358,14 @@ function attach(httpServer, { iceServers, admins }) {
     o.sockets.add(socket);
     socket.join(`u:${uid}`);
     socket.join(`r:${currentRoom(o)}`);
+    await loadKidExtras(o).catch((err) => console.error('[kids] load', err));
     pushState(o);
     broadcastRoom(currentRoom(o));
+    // let a kid's online friends see they came online
+    for (const f of o.friendList || []) {
+      const fo = online.get(f.id);
+      if (fo) pushState(fo);
+    }
 
     const on = (ev, fn) =>
       socket.on(ev, async (payload, ack) => {
@@ -291,7 +380,7 @@ function attach(httpServer, { iceServers, admins }) {
 
     on('room:join', ({ roomId }, reply) => {
       if (o.partyId) return reply({ ok: false, reason: 'Leave your party to join a lobby' });
-      if (!openRoomIds(auth.ageGroup(o.user)).includes(roomId)) return reply({ ok: false, reason: 'Unknown room' });
+      if (!openRoomIds(group(o)).includes(roomId)) return reply({ ok: false, reason: 'Unknown room' });
       relocate(o, () => {
         o.roomId = roomId;
       });
@@ -302,14 +391,17 @@ function attach(httpServer, { iceServers, admins }) {
       text = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
       if (!text) return reply({ ok: false });
       if (SAFETY_OFF) return reply({ ok: false, reason: SAFETY_MSG });
+      if (kidLocked(o)) return reply({ ok: false, reason: LOCKED_MSG });
+      if (!canChat(o)) return reply({ ok: false, reason: 'Chat is off. A parent can turn it on from the parent page.' });
+      const room = currentRoom(o);
+      if (room.startsWith('solo-')) return reply({ ok: false, reason: 'Party up with a friend to chat!' });
       if (isMuted(o.user)) return reply({ ok: false, reason: `You're muted until ${new Date(o.user.mutedUntil).toLocaleTimeString()}` });
       if (!rateOk(uid)) return reply({ ok: false, reason: 'Slow down a little!' });
-      const room = currentRoom(o);
       const hist = history.get(room) || [];
       const verdict = await moderate(text, {
         kind: 'chat',
         author: o.user.name,
-        ageGroup: auth.ageGroup(o.user),
+        ageGroup: group(o),
         context: hist.slice(-6).map((m) => ({ name: m.from.name, text: m.text })),
       });
       remember(o, room, text, !verdict.allow);
@@ -322,15 +414,16 @@ function attach(httpServer, { iceServers, admins }) {
       hist.push(msg);
       if (hist.length > HISTORY) hist.shift();
       history.set(room, hist);
-      io.to(`r:${room}`).emit('chat:msg', msg);
+      io.to(`r:${room}`).except('nochat').emit('chat:msg', msg);
       reply({ ok: true });
     });
 
     // ---- parties
     on('party:create', (_, reply) => {
+      if (kidLocked(o)) return reply({ ok: false, reason: LOCKED_MSG });
       if (o.partyId) return reply({ ok: false, reason: "You're already in a party" });
-      // a party belongs to one age group: teens and adults can never be in the same party
-      const p = { id: crypto.randomBytes(5).toString('hex'), code: newCode(), leaderId: uid, members: [], ready: new Set(), ageGroup: auth.ageGroup(o.user) };
+      // a party belongs to one age group: kids, teens and adults are never in the same party
+      const p = { id: crypto.randomBytes(5).toString('hex'), code: newCode(), leaderId: uid, members: [], ready: new Set(), ageGroup: group(o) };
       parties.set(p.id, p);
       partyByCode.set(p.code, p);
       joinParty(o, p);
@@ -338,9 +431,10 @@ function attach(httpServer, { iceServers, admins }) {
     });
 
     on('party:join', ({ code }, reply) => {
+      if (kidLocked(o)) return reply({ ok: false, reason: LOCKED_MSG });
       const p = partyByCode.get(String(code || '').toUpperCase().trim());
-      // other age group: same answer as a wrong code, so nobody can probe which parties are teens'
-      if (!p || p.ageGroup !== auth.ageGroup(o.user)) return reply({ ok: false, reason: 'No party with that code' });
+      // not allowed in: same answer as a wrong code, so nobody can probe who's in a party or how old they are
+      if (!p || !mayJoin(o, p)) return reply({ ok: false, reason: 'No party with that code' });
       if (p.members.length >= PARTY_MAX) return reply({ ok: false, reason: 'That party is full' });
       const blockedByMember = p.members.some((id) => (online.get(id)?.user.blocked || []).includes(uid));
       if (blockedByMember) return reply({ ok: false, reason: "You can't join that party" });
@@ -348,14 +442,19 @@ function attach(httpServer, { iceServers, admins }) {
       reply({ ok: true });
     });
 
-    on('party:invite', ({ name }, reply) => {
+    on('party:invite', ({ name, userId }, reply) => {
       const p = o.partyId && parties.get(o.partyId);
       if (!p) return reply({ ok: false, reason: 'Create a party first' });
-      const target = [...online.values()].find((m) => m.user.name.toLowerCase() === String(name || '').toLowerCase());
+      const target = userId
+        ? online.get(Number(userId))
+        : [...online.values()].find((m) => m.user.name.toLowerCase() === String(name || '').toLowerCase());
+      if (isKid(o)) {
+        if (!target || !o.user.friends.includes(target.user.id)) return reply({ ok: false, reason: 'You can only invite your friends' });
+        if (!target.sockets.size) return reply({ ok: false, reason: 'That friend is not online' });
+      }
       if (!target || target === o) return reply({ ok: false, reason: 'That player is not online' });
-      // blocked or a different age group: the invite is silently dropped (no hint about the other player's age)
-      const sameAge = auth.ageGroup(target.user) === p.ageGroup;
-      if (sameAge && !(target.user.blocked || []).includes(uid) && !(o.user.blocked || []).includes(target.user.id)) {
+      // blocked, other age group, or (kids) not allowed: the invite is silently dropped, with no hint why
+      if (mayJoin(target, p) && !(target.user.blocked || []).includes(uid) && !(o.user.blocked || []).includes(target.user.id)) {
         io.to(`u:${target.user.id}`).emit('party:invite', { from: o.user.name, code: p.code });
       }
       reply({ ok: true });
@@ -392,10 +491,55 @@ function attach(httpServer, { iceServers, admins }) {
       reply({ ok: true });
     });
 
+    // ---- kids: friends (both kids' parents must approve before they become friends)
+    on('friend:request', async ({ name }, reply) => {
+      if (!isKid(o)) return reply({ ok: false, reason: 'Only kids accounts use friend requests' });
+      if (kidLocked(o)) return reply({ ok: false, reason: LOCKED_MSG });
+      const sent = { ok: true }; // same answer whatever happens, so kids can't be used to probe other players
+      const target = await db.findUserByName(String(name || '').trim());
+      if (!target || target.id === uid) return reply(sent);
+      if (auth.ageGroup(target) !== 'kid' || !['basic', 'verified'].includes(target.consent)) return reply(sent);
+      if (o.user.friends.includes(target.id)) return reply(sent);
+      if (o.user.blocked.includes(target.id) || target.blocked.includes(uid)) return reply(sent);
+      const outgoing = (o.requests || []).filter((r) => !r.incoming && !r.accepted).length;
+      if (outgoing >= MAX_PENDING_REQUESTS) return reply({ ok: false, reason: 'You have lots of requests waiting already' });
+      const existing = await db.findFriendRequestBetween(uid, target.id);
+      if (existing && existing.toId === uid && !existing.accepted) {
+        await acceptRequest(existing); // they already asked you: that's a yes from both kids
+      } else if (!existing) {
+        await db.addFriendRequest(uid, target.id);
+        await refreshUser(target.id);
+      }
+      await refreshUser(uid);
+      reply(sent);
+    });
+
+    on('friend:respond', async ({ requestId, accept }, reply) => {
+      const r = await db.findFriendRequest(Number(requestId));
+      if (!r || r.toId !== uid || r.accepted) return reply({ ok: false });
+      if (accept) await acceptRequest(r);
+      else {
+        await db.deleteFriendRequest(r.id);
+        await refreshUser(r.fromId);
+      }
+      await refreshUser(uid);
+      reply({ ok: true });
+    });
+
+    on('friend:remove', async ({ userId }, reply) => {
+      const id = Number(userId);
+      if (!isKid(o) || !o.user.friends.includes(id)) return reply({ ok: false });
+      await unfriend(uid, id);
+      reply({ ok: true });
+    });
+
     // ---- voice (WebRTC mesh; the server only relays signalling)
     on('voice:join', (_, reply) => {
       if (SAFETY_OFF) return reply({ ok: false, reason: SAFETY_MSG });
+      if (kidLocked(o)) return reply({ ok: false, reason: LOCKED_MSG });
+      if (!canVoice(o)) return reply({ ok: false, reason: 'Voice chat is off. A parent can turn it on from the parent page.' });
       const room = currentRoom(o);
+      if (room.startsWith('solo-')) return reply({ ok: false, reason: 'Party up with a friend to use voice!' });
       const vr = voiceRooms.get(room) || new Map();
       if (vr.size >= VOICE_MAX && !vr.has(uid)) return reply({ ok: false, reason: 'Voice is full in this room' });
       if (o.voiceSocket) leaveVoice(o);
@@ -424,7 +568,7 @@ function attach(httpServer, { iceServers, admins }) {
       const room = o.voiceRoom;
       if (!text || !room) return;
       const ctx = transcripts.get(room) || [];
-      const verdict = await moderate(text, { kind: 'voice', author: o.user.name, ageGroup: auth.ageGroup(o.user), context: ctx });
+      const verdict = await moderate(text, { kind: 'voice', author: o.user.name, ageGroup: group(o), context: ctx });
       const before = ctx.map((m) => ({ name: m.name, text: `[voice] ${m.text}`, ts: m.ts }));
       ctx.push({ name: o.user.name, text, ts: Date.now() });
       if (ctx.length > 8) ctx.shift();
@@ -444,6 +588,10 @@ function attach(httpServer, { iceServers, admins }) {
         source: 'user',
         context: (recentByUser.get(target.id) || []).slice(-10),
       });
+      // a report made by a kid also goes to their parent
+      if (isKid(o) && o.user.parentEmail) {
+        notifyParent(o.user.parentEmail, `${o.user.name} reported a player`, `${o.user.name} reported ${target.name} on Storm Royale. Our moderators will review it. You can see your child's friends and settings on the parent page.`).catch(() => {});
+      }
       reply({ ok: true });
     });
 
@@ -454,6 +602,7 @@ function attach(httpServer, { iceServers, admins }) {
       if (block) set.add(id);
       else set.delete(id);
       o.user = await db.updateUser(uid, { blocked: [...set] });
+      if (block && isKid(o) && o.user.friends.includes(id)) await unfriend(uid, id);
       pushState(o);
       reply({ ok: true });
     });
@@ -470,12 +619,45 @@ function attach(httpServer, { iceServers, admins }) {
             leaveParty(o);
             online.delete(uid);
             broadcastRoom(currentRoom(o));
+            for (const f of o.friendList || []) {
+              const fo = online.get(f.id);
+              if (fo) pushState(fo);
+            }
           }, 60000),
         );
       }
       broadcastRoom(currentRoom(o));
     });
   });
+
+  async function acceptRequest(r) {
+    const updated = await db.updateFriendRequest(r.id, { accepted: true });
+    const [a, b] = await db.findUsersByIds([r.fromId, r.toId]);
+    if (a && b) {
+      for (const [kid, other] of [[a, b], [b, a]]) {
+        if (kid.parentEmail) {
+          notifyParent(kid.parentEmail, `${kid.name} has a new friend request`, `${kid.name} and ${other.name} want to be friends on Storm Royale. They can only play together once you and the other player's parent both approve.`).catch(() => {});
+        }
+      }
+    }
+    await refreshUser(r.fromId);
+    await refreshUser(r.toId);
+    return updated;
+  }
+
+  async function unfriend(a, b) {
+    const [ua, ub] = await db.findUsersByIds([a, b]);
+    if (ua) await db.updateUser(a, { friends: ua.friends.filter((x) => x !== b) });
+    if (ub) await db.updateUser(b, { friends: ub.friends.filter((x) => x !== a) });
+    // leave any shared party: kids' parties are friends-only
+    for (const [x, y] of [[a, b], [b, a]]) {
+      const ox = online.get(x);
+      const oy = online.get(y);
+      if (ox && oy && ox.partyId && ox.partyId === oy.partyId) leaveParty(ox);
+    }
+    await refreshUser(a);
+    await refreshUser(b);
+  }
 
   // game presence goes stale if the Roblox server stops reporting
   setInterval(() => {
@@ -489,16 +671,12 @@ function attach(httpServer, { iceServers, admins }) {
 
   // ---------------------------------------------------------------- API for HTTP routes
   return {
-    async refreshUser(uid) {
-      const o = online.get(uid);
-      if (!o) return;
-      o.user = await db.findUserById(uid);
-      pushState(o);
-      broadcastRoom(currentRoom(o));
-    },
+    refreshUser,
+    unfriend,
     disconnectUser(uid) {
       const o = online.get(uid);
       if (!o) return;
+      leaveParty(o);
       for (const s of o.sockets) s.disconnect(true);
     },
     setGamePresence(uid, status) {
@@ -523,9 +701,11 @@ function attach(httpServer, { iceServers, admins }) {
               return { name: m.user.name, robloxId: m.user.robloxId, status: freshGame(m) || 'Website', leader: id === p.leaderId, ready: p.ready.has(id) };
             }),
         },
-        chat: (history.get(`party-${p.id}`) || []).slice(-8).map((m) => ({ id: m.id, name: m.from.name, robloxId: m.from.robloxId, text: m.text, ts: m.ts })),
+        // kids without chat permission get no chat in the game either
+        chat: canChat(o) ? (history.get(`party-${p.id}`) || []).slice(-8).map((m) => ({ id: m.id, name: m.from.name, robloxId: m.from.robloxId, text: m.text, ts: m.ts })) : [],
       };
     },
+    isOnline: (uid) => Boolean(online.get(uid)?.sockets.size),
     stats() {
       return { online: online.size, parties: parties.size, inVoice: [...voiceRooms.values()].reduce((n, v) => n + v.size, 0) };
     },

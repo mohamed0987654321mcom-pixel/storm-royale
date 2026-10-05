@@ -7,6 +7,7 @@ process.env.DEV_SHOW_LINK = '1';
 process.env.GAME_API_KEY = 'test-key-123';
 process.env.ADMIN_EMAILS = 'admin@test.com';
 process.env.JWT_SECRET = 'test-secret';
+process.env.KIDS_ENABLED = '1';
 delete process.env.DATABASE_URL;
 delete process.env.ANTHROPIC_API_KEY;
 delete process.env.RESEND_API_KEY;
@@ -42,6 +43,27 @@ async function signup(email, name, birthDate) {
   return cookie;
 }
 
+async function kidSignup(email, name, birthDate, parentEmail) {
+  let r = await post('/api/auth/start', { email, name, birthDate });
+  assert.equal((await r.json()).needParent, true, 'under-13 asks for a parent email');
+  r = await post('/api/auth/start', { email, name, birthDate, parentEmail });
+  const data = await r.json();
+  assert.ok(data.devLink, `got sign-in link for ${name}: ${JSON.stringify(data)}`);
+  const v = await fetch(data.devLink, { redirect: 'manual' });
+  return v.headers.get('set-cookie').split(';')[0];
+}
+
+async function parentLogin(email) {
+  const d = await (await post('/api/parent/start', { email })).json();
+  assert.ok(d.devLink, `parent link for ${email}`);
+  const v = await fetch(d.devLink, { redirect: 'manual' });
+  assert.equal(v.status, 302);
+  const cookie = v.headers.get('set-cookie').split(';')[0];
+  assert.match(cookie, /^sr_parent=/);
+  return cookie;
+}
+const pget = (path, cookie) => fetch(BASE + path, { headers: { cookie } }).then((r) => r.json());
+
 function connect(cookie) {
   const s = io(BASE, { extraHeaders: { cookie }, transports: ['websocket'], forceNew: true });
   s.inbox = [];
@@ -58,9 +80,13 @@ const ask = (s, ev, payload) => new Promise((res) => s.emit(ev, payload || {}, r
   const ok = (name) => { results.push(name); console.log('  ✓', name); };
 
   // --- sign up
-  const under = await post('/api/auth/start', { email: 'kid@test.com', name: 'TinyKid', birthDate: '2018-05-05' });
+  let under = await post('/api/auth/start', { email: 'kid@test.com', name: 'TinyKid', birthDate: '2016-05-05' });
+  assert.equal((await under.json()).needParent, true);
+  under = await post('/api/auth/start', { email: 'baby@test.com', name: 'BabyKid', birthDate: '2023-05-05' });
   assert.equal(under.status, 403);
-  ok('under-13 sign-up is refused');
+  under = await post('/api/auth/start', { email: 'kid@test.com', name: 'TinyKid', birthDate: '2016-05-05', parentEmail: 'kid@test.com' });
+  assert.equal(under.status, 400);
+  ok("under-13s need their parent's email (not their own), and must be 6+");
   const bad = await post('/api/auth/start', { email: 'x@test.com', name: 'bad name!', birthDate: '2008-01-01' });
   assert.equal(bad.status, 400);
   ok('invalid display names are refused');
@@ -221,8 +247,109 @@ const ask = (s, ev, payload) => new Promise((res) => s.emit(ev, payload || {}, r
   assert.equal(parseVerdict('no json here'), null);
   ok('Claude moderation replies are parsed safely');
 
+  // ================================================================ kids accounts
+  const db = require('../lib/db');
+  const cK1 = await kidSignup('k1@test.com', 'KidOne', '2016-03-03', 'mom@test.com');
+  const cK2 = await kidSignup('k2@test.com', 'KidTwo', '2015-06-06', 'dad@test.com');
+  const cK3 = await kidSignup('k3@test.com', 'KidThree', '2016-09-09', 'aunt@test.com');
+  const K1 = connect(cK1), K2 = connect(cK2), K3 = connect(cK3);
+  await wait(400);
+  const s1 = lastState(K1);
+  assert.equal(s1.me.ageGroup, 'kid');
+  assert.equal(s1.me.kid.locked, true);
+  assert.equal(s1.room.kind, 'solo');
+  assert.deepEqual(s1.rooms, [], 'kids get no open lobbies');
+  assert.equal((await ask(K1, 'party:create')).ok, false);
+  assert.equal((await ask(K1, 'chat:send', { text: 'hi' })).ok, false);
+  assert.equal((await ask(K1, 'voice:join')).ok, false);
+  ok('a new kids account is locked until a parent approves (and has no open lobbies)');
+
+  const mom = await parentLogin('mom@test.com');
+  const dad = await parentLogin('dad@test.com');
+  const aunt = await parentLogin('aunt@test.com');
+  let pm = await pget('/api/parent/me', mom);
+  assert.equal(pm.kids.length, 1);
+  assert.equal(pm.kids[0].consent, 'pending');
+  const k1id = pm.kids[0].id;
+  assert.equal((await post('/api/parent/consent', { kidId: k1id, approve: true }, dad)).status, 404, "a parent can't touch another family's child");
+  assert.equal((await post('/api/parent/consent', { kidId: k1id, approve: true }, mom)).status, 200);
+  const k2id = (await pget('/api/parent/me', dad)).kids[0].id;
+  await post('/api/parent/consent', { kidId: k2id, approve: true }, dad);
+  const k3id = (await pget('/api/parent/me', aunt)).kids[0].id;
+  await post('/api/parent/consent', { kidId: k3id, approve: true }, aunt);
+  const nobody = await (await post('/api/parent/start', { email: 'stranger@test.com' })).json();
+  assert.equal(nobody.ok, true);
+  assert.equal(nobody.devLink, undefined, 'no link for emails without kids (same answer though)');
+  await wait(200);
+  assert.equal(lastState(K1).me.kid.locked, false);
+  ok('parents sign in by email, can only approve their own child, and approval unlocks the account');
+
+  assert.equal((await ask(C, 'friend:request', { name: 'KidOne' })).ok, false, 'adults cannot friend kids');
+  assert.equal((await ask(K1, 'friend:request', { name: 'GrownUp' })).ok, true, 'same answer for non-kids');
+  await ask(K1, 'friend:request', { name: 'KidTwo' });
+  await wait(200);
+  const inc = lastState(K2).me.kid.requests.find((r) => r.incoming);
+  assert.ok(inc && inc.name === 'KidOne');
+  assert.equal(lastState(K1).me.kid.requests.length, 1, 'no request was created for the adult');
+  await ask(K2, 'friend:respond', { requestId: inc.id, accept: true });
+  await wait(200);
+  assert.ok(lastState(K1).me.kid.requests[0].waitingParents);
+  pm = await pget('/api/parent/me', mom);
+  const reqId = pm.kids[0].requests[0].id;
+  await post('/api/parent/request', { requestId: reqId, approve: true }, mom);
+  await wait(150);
+  assert.equal(lastState(K1).me.kid.friends.length, 0, 'one parent is not enough');
+  assert.equal((await post('/api/parent/request', { requestId: reqId, approve: true }, aunt)).status, 404, "an unrelated parent can't approve");
+  await post('/api/parent/request', { requestId: reqId, approve: true }, dad);
+  await wait(200);
+  assert.deepEqual(lastState(K1).me.kid.friends.map((f) => f.name), ['KidTwo']);
+  assert.deepEqual(lastState(K2).me.kid.friends.map((f) => f.name), ['KidOne']);
+  ok('kids become friends only after both kids and both parents say yes');
+
+  const kp = await ask(K1, 'party:create');
+  assert.equal(kp.ok, true);
+  assert.equal((await ask(K1, 'party:invite', { name: 'KidThree' })).ok, false, 'kids can only invite friends');
+  await ask(K1, 'party:invite', { userId: lastState(K2).me.id });
+  await wait(150);
+  assert.ok(got(K2, 'party:invite', (m) => m.code === kp.code));
+  assert.equal((await ask(K3, 'party:join', { code: kp.code })).ok, false, 'a kid who is not a friend cannot join');
+  assert.equal((await ask(C, 'party:join', { code: kp.code })).ok, false, 'an adult cannot join');
+  assert.equal((await ask(K2, 'party:join', { code: kp.code })).ok, true);
+  ok('kids party only with approved friends; other kids and adults are kept out');
+
+  assert.equal((await ask(K1, 'chat:send', { text: 'gg' })).ok, false);
+  assert.equal((await ask(K1, 'voice:join')).ok, false);
+  const setRes = await post('/api/parent/settings', { kidId: k1id, chat: true }, mom);
+  assert.equal(setRes.status, 403);
+  assert.equal((await setRes.json()).needVerify, true);
+  assert.equal((await post('/api/parent/verify', { kidId: k1id }, mom)).status, 501);
+  await db.updateUser(k1id, { consent: 'verified' }); // stands in for Phase 2 (Epic KWS) verification
+  await db.updateUser(k2id, { consent: 'verified' });
+  assert.equal((await post('/api/parent/settings', { kidId: k1id, chat: true }, mom)).status, 200);
+  await wait(150);
+  K2.inbox.length = 0;
+  assert.equal((await ask(K1, 'chat:send', { text: 'nice build' })).ok, true);
+  await wait(150);
+  assert.ok(!got(K2, 'chat:msg'), 'a kid without chat permission receives nothing');
+  await post('/api/parent/settings', { kidId: k2id, chat: true }, dad);
+  await wait(150);
+  await ask(K1, 'chat:send', { text: 'follow me' });
+  await wait(150);
+  assert.ok(got(K2, 'chat:msg', (m) => m.text === 'follow me'));
+  ok('kids chat only after a verified parent turns it on, and only receive chat if allowed');
+
+  await post('/api/parent/settings', { kidId: k1id, chat: false }, mom);
+  await wait(150);
+  assert.equal((await ask(K1, 'chat:send', { text: 'hello' })).ok, false);
+  const gone = new Promise((r) => K3.on('disconnect', r));
+  assert.equal((await post('/api/parent/delete', { kidId: k3id }, aunt)).status, 200);
+  await gone;
+  assert.equal((await pget('/api/parent/me', aunt)).kids.length, 0);
+  assert.equal(await db.findUserById(k3id), null);
+  ok('parents can switch chat off any time, and deleting the account removes it and kicks the child out');
+
   console.log(`\nALL ${results.length} CHECKS PASSED`);
-  for (const s of [B, C]) s.close();
+  for (const s of [B, C, K1, K2]) s.close();
   process.exit(0);
 })().catch((err) => {
   console.error('\nTEST FAILED:', err);

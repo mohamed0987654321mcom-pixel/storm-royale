@@ -87,7 +87,7 @@ VS Code will suggest the **Rojo** and **Luau LSP** extensions. Luau LSP gives au
 Party, chat and voice site for players, deployed on Railway at **stormroyale.mparadiseplatrforms.com**.
 
 - Node.js + Express + Socket.io, Postgres on Railway (in-memory when run locally)
-- Email sign-in links (Resend), 13+ only; teens and adults are kept apart (separate lobbies, and no mixed parties)
+- Email sign-in links (Resend); kids (under 13, parent-approved), teens and adults are kept apart everywhere
 - Parties of 4 with party chat + party voice; open lobby rooms when you're not in a party
 - Voice: WebRTC between players; your browser turns your speech into text for the AI safety check
 - Moderation: Claude Haiku 4.5 checks every chat message, name and voice transcript; strikes, mutes, reports, admin page at `/admin`
@@ -104,6 +104,15 @@ Run locally: `cd web && npm install && DEV_SHOW_LINK=1 npm start` → http://loc
 | `RESEND_API_KEY`, `EMAIL_FROM` | sign-in emails, e.g. `Storm Royale <no-reply@mparadiseplatrforms.com>` |
 | `ADMIN_EMAILS` | comma-separated emails that can open `/admin` |
 | `TURN_URL`, `TURN_USERNAME`, `TURN_PASSWORD` | optional relay for players whose network blocks direct voice |
+| `PUBLIC_URL` | the site's address, used in email links |
+| `KIDS_ENABLED` | `1` allows under-13 sign-ups (keep off until parent verification is connected) |
+| `KWS_ENABLED`, `KWS_CLIENT_ID`, `KWS_CLIENT_SECRET` | Phase 2: Epic Kids Web Services parent verification |
+
+### Kids accounts (under 13)
+- Sign up with a parent's email; the account is locked until the parent approves it on **/parent**
+- No open lobbies: kids only party with friends that **both** kids and **both** parents approved; never with teens or adults
+- Chat and voice are off until a **verified** parent turns them on (verification = Phase 2, Epic KWS); kids without chat don't receive chat either
+- Parents can remove friends, switch chat/voice off, and delete the account at any time; unapproved accounts are deleted after 7 days
 
 ### Game setup for the website link
 1. Studio → Game Settings → Security → **Allow HTTP Requests** on
