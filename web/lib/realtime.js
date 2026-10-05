@@ -194,14 +194,15 @@ function attach(httpServer, { iceServers, admins }) {
   }
 
   // ---------------------------------------------------------------- moderation actions
-  function remember(o, room, text) {
+  function remember(o, room, text, blocked = false) {
     const list = recentByUser.get(o.user.id) || [];
-    list.push({ room, text, ts: Date.now() });
+    list.push({ room, name: o.user.name, text, ts: Date.now(), ...(blocked ? { blocked: true } : {}) });
     if (list.length > 15) list.shift();
     recentByUser.set(o.user.id, list);
   }
 
-  async function punish(o, verdict, content, room, isVoice) {
+  // convo: what was said in the room just before, so the admin sees the whole conversation
+  async function punish(o, verdict, content, room, isVoice, convo = []) {
     if (verdict.category === 'unavailable') return;
     if (verdict.category === 'self_harm') {
       systemMsg(o, "💙 It sounds like things might be hard right now. You're not alone. Please talk to someone you trust, or reach out to a local helpline.");
@@ -224,7 +225,7 @@ function attach(httpServer, { iceServers, admins }) {
         targetId: o.user.id,
         reason: `AI moderation: ${verdict.category} (${verdict.reason})`,
         source: 'ai',
-        context: [...(recentByUser.get(o.user.id) || []).slice(-8), { room, text: content, ts: Date.now(), blocked: true }],
+        context: [...convo.slice(-8), { name: o.user.name, text: content, ts: Date.now(), blocked: true }],
       });
     }
     const what = isVoice ? 'Something you said in voice' : 'Your message';
@@ -311,9 +312,9 @@ function attach(httpServer, { iceServers, admins }) {
         ageGroup: auth.ageGroup(o.user),
         context: hist.slice(-6).map((m) => ({ name: m.from.name, text: m.text })),
       });
-      remember(o, room, text);
+      remember(o, room, text, !verdict.allow);
       if (!verdict.allow) {
-        await punish(o, verdict, text, room, false);
+        await punish(o, verdict, text, room, false, hist.slice(-8).map((m) => ({ name: m.from.name, text: m.text, ts: m.ts })));
         return reply({ ok: false, reason: verdict.reason, category: verdict.category });
       }
       if (currentRoom(o) !== room) return reply({ ok: false, reason: 'You changed rooms' });
@@ -420,11 +421,12 @@ function attach(httpServer, { iceServers, admins }) {
       if (!text || !room) return;
       const ctx = transcripts.get(room) || [];
       const verdict = await moderate(text, { kind: 'voice', author: o.user.name, ageGroup: auth.ageGroup(o.user), context: ctx });
-      ctx.push({ name: o.user.name, text });
+      const before = ctx.map((m) => ({ name: m.name, text: `[voice] ${m.text}`, ts: m.ts }));
+      ctx.push({ name: o.user.name, text, ts: Date.now() });
       if (ctx.length > 8) ctx.shift();
       transcripts.set(room, ctx);
-      remember(o, room, `[voice] ${text}`);
-      if (!verdict.allow) await punish(o, verdict, `[voice] ${text}`, room, true);
+      remember(o, room, `[voice] ${text}`, !verdict.allow);
+      if (!verdict.allow) await punish(o, verdict, `[voice] ${text}`, room, true, before);
     });
 
     // ---- safety tools

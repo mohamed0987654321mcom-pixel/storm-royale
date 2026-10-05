@@ -46,7 +46,7 @@
           ),
           h('div', { class: 'reason' }, rep.reason),
           rep.context.length
-            ? h('div', { class: 'ctx' }, rep.context.map((c) => h('div', { class: c.blocked ? 'blocked' : '' }, `${new Date(c.ts).toLocaleTimeString()} — ${c.text}${c.blocked ? '  (blocked)' : ''}`)))
+            ? h('div', { class: 'ctx' }, rep.context.map((c) => h('div', { class: c.blocked ? 'blocked' : '' }, `${c.ts ? new Date(c.ts).toLocaleTimeString() + ' — ' : ''}${c.name ? c.name + ': ' : ''}${c.text}${c.blocked ? '  (blocked)' : ''}`)))
             : null,
           status === 'open'
             ? h('div', { class: 'actions' },
