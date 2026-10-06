@@ -56,8 +56,29 @@ function CameraCtl.update()
 	if m == "Menu" then
 		cam.CameraType = Enum.CameraType.Scriptable
 		local pad = plr:GetAttribute("PadPos")
+		local studio = S.Studio
+		local now = os.clock()
+		local dt = math.min(now - (studio.LastT or now), 0.1)
+		studio.LastT = now
 		if typeof(pad) == "Vector3" then
-			cam.CFrame = CFrame.lookAt(pad + Vector3.new(-4.5, 4.4, -15), pad + Vector3.new(-4.5, 3.3, 0))
+			local target
+			if studio.On then
+				-- MY STYLE 3D studio: orbit around your character (it sits on the left, the editor is on the right)
+				if studio.Spin then
+					studio.Yaw += dt * 0.7
+				end
+				local focus = pad + Vector3.new(0, studio.FocusY, 0)
+				local offset = (CFrame.Angles(0, studio.Yaw, 0) * CFrame.Angles(studio.Pitch, 0, 0)):VectorToWorldSpace(Vector3.new(0, 0, -studio.Dist))
+				target = CFrame.lookAt(focus + offset, focus) * CFrame.new(studio.Dist * 0.42, 0, 0)
+			else
+				target = CFrame.lookAt(pad + Vector3.new(-4.5, 4.4, -15), pad + Vector3.new(-4.5, 3.3, 0))
+			end
+			-- glide between shots instead of jumping
+			if studio.On or now < (studio.BlendUntil or 0) then
+				cam.CFrame = cam.CFrame:Lerp(target, math.min(1, dt * 9))
+			else
+				cam.CFrame = target
+			end
 		end
 		cam.FieldOfView = 50
 		freeCursor()

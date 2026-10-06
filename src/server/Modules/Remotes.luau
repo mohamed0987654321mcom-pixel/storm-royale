@@ -173,9 +173,9 @@ Handlers.AvatarSave = function(plr: Player, look)
 		local l = nextLook[plr]
 		nextLook[plr] = nil
 		local clean, notOwned, unchecked = Avatar.verify(plr, l) -- only items this player owns
-		Avatar.setLook(plr, clean)
-		WebLink.saveLook(plr, clean)
+		Avatar.setLook(plr, clean) -- dresses the character on the stage
 		Net:FireClient(plr, "AvatarSaved", { NotOwned = notOwned, Unchecked = unchecked })
+		WebLink.saveLook(plr, clean) -- then tell the website (slower, so it goes last)
 	end
 	saving[plr] = nil
 end

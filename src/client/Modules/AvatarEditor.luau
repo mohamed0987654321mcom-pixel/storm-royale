@@ -1,9 +1,12 @@
 -- AvatarEditor: the MY STYLE editor in the LOCKER.
 -- Dress up with the Roblox items you own (Roblox asks your permission once), and pick body colors and sizes.
 -- Every change is saved (the server checks you own each item) and shows on your character on the stage.
+-- 3D studio: while the editor is open the camera orbits your character: drag to spin, scroll / pinch to zoom,
+-- FULL / FACE / BACK views and a turntable SPIN (the camera itself is in CameraCtl, driven by S.Studio).
 -- Looks are shared with the website locker when your account is linked.
 
 local AvatarEditorService = game:GetService("AvatarEditorService")
+local UIS = game:GetService("UserInputService")
 
 local Core = require(script.Parent.Core)
 local Net, S, plr = Core.Net, Core.S, Core.plr
@@ -111,9 +114,118 @@ local function addItems(list: { any })
 end
 
 -------------------------------------------------------------------------------
+-- 3D studio camera
+-------------------------------------------------------------------------------
+local Studio = S.Studio
+local VIEWS = {
+	FULL = { Yaw = 0, Pitch = 0.08, Dist = 11, FocusY = 3 },
+	FACE = { Yaw = 0, Pitch = 0.05, Dist = 4.6, FocusY = 4.5 },
+	BACK = { Yaw = math.pi, Pitch = 0.12, Dist = 9.5, FocusY = 3.3 },
+}
+local lastManual = 0
+
+local function setView(name: string)
+	local v = VIEWS[name]
+	-- keep spinning the short way round
+	local yaw = v.Yaw
+	while yaw - Studio.Yaw > math.pi do
+		yaw -= 2 * math.pi
+	end
+	while Studio.Yaw - yaw > math.pi do
+		yaw += 2 * math.pi
+	end
+	Studio.Yaw, Studio.Pitch, Studio.Dist, Studio.FocusY = yaw, v.Pitch, v.Dist, v.FocusY
+end
+
+local function zoomBy(delta: number)
+	Studio.Dist = math.clamp(Studio.Dist + delta, 3.5, 15)
+	-- closer = aim at the face, further = the whole body
+	Studio.FocusY = 3 + (1 - (Studio.Dist - 3.5) / 11.5) * 1.5
+	lastManual = os.clock()
+end
+
+-- drag anywhere that isn't the editor to spin; mouse wheel or pinch to zoom
+local dragInput: InputObject? = nil
+local lastPos: Vector3? = nil
+UIS.InputBegan:Connect(function(input, processed)
+	if not Studio.On or processed then
+		return
+	end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragInput = input
+		lastPos = input.Position
+	end
+end)
+UIS.InputChanged:Connect(function(input, processed)
+	if not Studio.On then
+		return
+	end
+	if input.UserInputType == Enum.UserInputType.MouseWheel then
+		if not processed then
+			zoomBy(-input.Position.Z * 1.2)
+		end
+		return
+	end
+	local d = dragInput
+	if not d or not lastPos then
+		return
+	end
+	local moving = input == d or (d.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)
+	if moving then
+		local delta = input.Position - lastPos
+		lastPos = input.Position
+		Studio.Yaw -= delta.X * 0.012
+		Studio.Pitch = math.clamp(Studio.Pitch + delta.Y * 0.006, -0.3, 0.75)
+		Studio.Spin = false
+		lastManual = os.clock()
+	end
+end)
+UIS.InputEnded:Connect(function(input)
+	if input == dragInput or (dragInput and input.UserInputType == Enum.UserInputType.MouseButton1 and dragInput.UserInputType == Enum.UserInputType.MouseButton1) then
+		dragInput = nil
+	end
+end)
+local pinchBase = Studio.Dist
+UIS.TouchPinch:Connect(function(_, scale, _, state, processed)
+	if not Studio.On or processed then
+		return
+	end
+	if state == Enum.UserInputState.Begin then
+		pinchBase = Studio.Dist
+	elseif scale > 0 then
+		zoomBy(pinchBase / scale - Studio.Dist)
+	end
+end)
+
+-- a little sparkle when your look changes
+local function sparkle()
+	local char = plr.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return
+	end
+	local att = new("Attachment", { Position = Vector3.new(0, 0.5, 0) }, root)
+	local pe = new("ParticleEmitter", {
+		Texture = "rbxasset://textures/particles/sparkles_main.dds",
+		Color = ColorSequence.new(YELLOW, Color3.fromRGB(150, 220, 255)),
+		Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(1, 0) }),
+		Lifetime = NumberRange.new(0.6, 1.1),
+		Speed = NumberRange.new(4, 9),
+		SpreadAngle = Vector2.new(180, 180),
+		LightEmission = 1,
+		Rate = 0,
+	}, att)
+	pe:Emit(30)
+	task.delay(1.5, function()
+		att:Destroy()
+	end)
+end
+
+-------------------------------------------------------------------------------
 -- UI
 -------------------------------------------------------------------------------
-local panel, statusL, tabsF, body, footer
+local panel, statusL, tabsF, body, footer, viewBar, spinBtn
+local closeCb: (() -> ())? = nil
 local tabButtons: { [string]: TextButton } = {}
 local render: () -> ()
 
@@ -139,7 +251,7 @@ local function scheduleSave()
 	st.saveToken += 1
 	local token = st.saveToken
 	setStatus("● changes…", YELLOW)
-	task.delay(0.7, function()
+	task.delay(0.35, function()
 		if token ~= st.saveToken then
 			return
 		end
@@ -448,7 +560,9 @@ end
 
 -- builds the editor inside the LOCKER page (hidden until opened)
 function Editor.build(page: Instance, onClose: () -> ())
+	closeCb = onClose
 	panel = new("Frame", { Size = UDim2.new(0.5, 0, 1, -36), Position = UDim2.new(1, -16, 0, 18), AnchorPoint = Vector2.new(1, 0), BackgroundColor3 = Color3.fromRGB(10, 20, 60), BackgroundTransparency = 0.12, Visible = false }, page)
+	panel.Active = true -- taps on the editor don't spin the camera
 	new("UISizeConstraint", { MaxSize = Vector2.new(720, math.huge), MinSize = Vector2.new(420, 0) }, panel)
 	corner(panel, 12)
 	stroke(panel, Color3.fromRGB(70, 110, 230), 2)
@@ -459,7 +573,6 @@ function Editor.build(page: Instance, onClose: () -> ())
 	local close = button(panel, "✕", UDim2.new(0, 40, 0, 36), UDim2.new(1, -40, 0, 2), Color3.fromRGB(35, 55, 130), WHITE, 20)
 	close.MouseButton1Click:Connect(function()
 		Editor.close()
-		onClose()
 	end)
 
 	tabsF = new("Frame", { Size = UDim2.new(1, 0, 0, 36), Position = UDim2.new(0, 0, 0, 46), BackgroundTransparency = 1 }, panel)
@@ -469,6 +582,11 @@ function Editor.build(page: Instance, onClose: () -> ())
 		b.MouseButton1Click:Connect(function()
 			st.cat = c.Id
 			st.shown = PAGE
+			-- point the camera at what you're changing (unless you just moved it yourself)
+			if os.clock() - lastManual > 4 then
+				Studio.Spin = false
+				setView(c.Id == "head" and "FACE" or "FULL")
+			end
 			render()
 		end)
 		tabButtons[c.Id] = b
@@ -489,6 +607,28 @@ function Editor.build(page: Instance, onClose: () -> ())
 	toRoblox.MouseButton1Click:Connect(function()
 		Editor.saveToRoblox()
 	end)
+
+	-- 3D studio controls, floating under your character
+	viewBar = new("Frame", { Size = UDim2.new(0, 420, 0, 74), Position = UDim2.new(0, 24, 1, -92), BackgroundTransparency = 1, Visible = false }, page)
+	local row = new("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1 }, viewBar)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }, row)
+	for _, name in { "FULL", "FACE", "BACK" } do
+		local b = button(row, name, UDim2.new(0, 90, 1, 0), UDim2.new(), Color3.fromRGB(20, 34, 90), WHITE, 18)
+		stroke(b, Color3.fromRGB(90, 130, 255), 2)
+		b.MouseButton1Click:Connect(function()
+			Studio.Spin = false
+			setView(name)
+			lastManual = os.clock()
+		end)
+	end
+	spinBtn = button(row, "⟳ SPIN", UDim2.new(0, 110, 1, 0), UDim2.new(), Color3.fromRGB(20, 34, 90), WHITE, 18)
+	stroke(spinBtn, YELLOW, 2)
+	spinBtn.MouseButton1Click:Connect(function()
+		Studio.Spin = not Studio.Spin
+		spinBtn.BackgroundColor3 = Studio.Spin and YELLOW or Color3.fromRGB(20, 34, 90)
+		spinBtn.TextColor3 = Studio.Spin and Color3.fromRGB(25, 20, 0) or WHITE
+	end)
+	text(viewBar, Core.TOUCH and "Drag to spin  •  pinch to zoom" or "Drag to spin  •  scroll to zoom", UDim2.new(1, 0, 0, 26), UDim2.new(0, 0, 0, 46), FONT_M, 14, Color3.fromRGB(200, 215, 255), Enum.TextXAlignment.Left)
 end
 
 function Editor.open()
@@ -497,6 +637,10 @@ function Editor.open()
 	end
 	st.open = true
 	panel.Visible = true
+	viewBar.Visible = true
+	Studio.On = true
+	Studio.Spin = false
+	setView(st.cat == "head" and "FACE" or "FULL")
 	local d = S.Data
 	st.look = (d and type(d.Look) == "table") and copy(d.Look) or nil
 	st.look = st.look or blankLook()
@@ -510,9 +654,19 @@ function Editor.open()
 end
 
 function Editor.close()
+	if not st.open then
+		return
+	end
 	st.open = false
+	Studio.On = false
+	Studio.BlendUntil = os.clock() + 1.2 -- glide back to the normal lobby shot
+	dragInput = nil
 	if panel then
 		panel.Visible = false
+		viewBar.Visible = false
+	end
+	if closeCb then
+		closeCb()
 	end
 end
 
@@ -547,6 +701,7 @@ function Editor.onSaved(info: any)
 		return
 	end
 	setStatus("✓ Saved", Color3.fromRGB(150, 255, 170))
+	sparkle()
 	if (info.NotOwned or 0) > 0 then
 		Core.toast(info.NotOwned .. " item(s) were taken off because your Roblox account doesn't own them.")
 	elseif (info.Unchecked or 0) > 0 then

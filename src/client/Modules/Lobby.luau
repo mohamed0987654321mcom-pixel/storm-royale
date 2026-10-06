@@ -24,6 +24,9 @@ local coinL = text(topBar, "🪙 0", UDim2.new(0, 200, 1, 0), UDim2.new(1, -220,
 local Pages = {}
 local TabButtons = {}
 local function showTab(name: string)
+	if name ~= "LOCKER" then
+		AvatarEditor.close() -- leaving the locker ends the 3D studio
+	end
 	for n, p in Pages do
 		p.Visible = (n == name)
 	end

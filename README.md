@@ -111,7 +111,8 @@ Run locally: `cd web && npm install && DEV_SHOW_LINK=1 npm start` → http://loc
 | `KWS_ENABLED`, `KWS_CLIENT_ID`, `KWS_CLIENT_SECRET` | Phase 2: Epic Kids Web Services parent verification |
 
 ### MY STYLE (avatar builder with your own Roblox items)
-- **In the game:** LOCKER → **🎨 MY STYLE**. Tap **SHOW MY ITEMS** once (Roblox asks the player to allow it), then wear owned items, pick body colors and sizes. Every change saves and shows on the character in the lobby. **SAVE TO MY ROBLOX AVATAR** can also make it the real Roblox avatar (Roblox asks to confirm)
+- **In the game:** LOCKER → **🎨 MY STYLE**. Tap **SHOW MY ITEMS** once (Roblox asks the player to allow it), then wear owned items, pick body colors and sizes. Every change saves and shows on the character in the lobby.
+- **3D studio:** while MY STYLE is open the camera orbits your real 3D character: drag to spin, scroll / pinch to zoom, FULL / FACE / BACK views and a turntable SPIN; the HEAD tab frames your face. (Websites can't build Roblox avatars in 3D: since March 2026 Roblox's 3D endpoints need an Open Cloud key and only return the saved avatar as one mesh, so live 3D editing lives in the game.) **SAVE TO MY ROBLOX AVATAR** can also make it the real Roblox avatar (Roblox asks to confirm)
 - **On the website:** `/locker` (or **MY STYLE** in the party panel / profile). Same items, colors and sizes; SAVE and the game picks it up within ~10 s
 - Owned items only: the game server checks every worn item with `MarketplaceService:PlayerOwnsAsset`; the website only accepts items from the list the game shared plus what the player wears on Roblox right now (Roblox inventories are usually private, so the game reads them with the player's permission)
 - Looks only change Storm Royale, never the real Roblox avatar (unless the player uses SAVE TO MY ROBLOX AVATAR). "Normal avatar" goes back to the Roblox avatar

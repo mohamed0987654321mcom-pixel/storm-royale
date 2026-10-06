@@ -46,6 +46,8 @@ Core.S = {
 	LastJumpReq = 0,
 	GhostArgs = nil :: any,
 	ShrinkSeen = 0,
+	-- MY STYLE 3D studio camera (orbit around your character in the lobby)
+	Studio = { On = false, Yaw = 0, Pitch = 0.08, Dist = 11, FocusY = 3, Spin = false, BlendUntil = 0, LastT = 0 },
 }
 
 -- instances our own raycasts should ignore (effects, previews, lobby backdrop...)
