@@ -34,6 +34,7 @@ local shadowStroke = new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 
 local ring = circle(26, root)
 ring.BackgroundColor3 = YELLOW
 local ringStroke = new("UIStroke", { Color = WHITE, Thickness = 2.5, Transparency = 0.05 }, ring)
+ring.BackgroundTransparency = 1
 local dot = circle(7, root)
 dot.BackgroundTransparency = 0
 dot.BackgroundColor3 = YELLOW
@@ -103,8 +104,8 @@ function Cursor.start()
 		curSize += (target - curSize) * math.min(1, dt * 18)
 		ring.Size = UDim2.fromOffset(curSize, curSize)
 		shadow.Size = UDim2.fromOffset(curSize + 4, curSize + 4)
-		ring.BackgroundTransparency = (hovering or (studio and pressed)) and 0.78 or 1
 		ringStroke.Color = (hovering or studio) and YELLOW or WHITE
+		ringStroke.Thickness = hovering and 3.5 or 2.5
 		shadowStroke.Transparency = hovering and 0.5 or 0.65
 		dot.Visible = not studio
 		spinHint.Visible = studio
