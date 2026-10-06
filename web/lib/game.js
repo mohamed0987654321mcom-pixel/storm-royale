@@ -2,6 +2,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const db = require('./db');
+const auth = require('./auth');
 const looks = require('./looks');
 const mparadise = require('./mparadise');
 
@@ -15,7 +16,7 @@ function keyOk(given) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-module.exports = function gameRoutes(rt) {
+module.exports = function gameRoutes(rt, crossplay) {
   const r = express.Router();
 
   r.use((req, res, next) => {
@@ -101,8 +102,46 @@ module.exports = function gameRoutes(rt) {
     s.best = s.best ? Math.min(s.best, placement) : placement;
     await db.updateUser(u.id, { stats: s });
     await rt.refreshUser(u.id);
+    // if this player is in a cross-play squad, show their match result there too
+    if (crossplay && crossplay.inSquad(`roblox:${u.robloxId}`)) {
+      crossplay.reportResult(`roblox:${u.robloxId}`, { kills, placement, won: req.body.won === true || placement === 1 });
+    }
     res.json({ ok: true });
   });
+
+  // ---- cross-play squads (the Roblox game drives these for its players; the game server already
+  // authenticated with the API key above). A Roblox player is keyed `roblox:<robloxId>`. If that
+  // Roblox account is linked to a Storm Royale KID account, squads are refused (same stranger-
+  // contact rule as the rest of the site). Everything else is the shared hub (lib/crossplay.js).
+  if (crossplay) {
+    const robloxMember = async (body) => {
+      const robloxId = Number(body.robloxId);
+      let name = String(body.name || '').slice(0, 24) || null;
+      let restricted = null;
+      if (Number.isSafeInteger(robloxId) && robloxId > 0) {
+        const u = await db.findUserByRoblox(robloxId);
+        if (u) {
+          name = name || u.name || u.robloxName;
+          restricted = { isKid: auth.ageGroup(u) === 'kid' };
+        }
+      }
+      return { surface: 'roblox', id: String(robloxId), name: name || 'Roblox player', restricted };
+    };
+    const rbKey = (body) => `roblox:${Number(body.robloxId)}`;
+    const reply = (res, result) => (result.error ? res.status(result.kid ? 403 : 400).json(result) : res.json(result));
+
+    r.post('/crossplay/create', async (req, res) => reply(res, crossplay.create(await robloxMember(req.body || {}))));
+    r.post('/crossplay/join', async (req, res) => reply(res, crossplay.join(req.body?.code, await robloxMember(req.body || {}))));
+    r.post('/crossplay/leave', (req, res) => res.json(crossplay.leave(rbKey(req.body || {}))));
+    r.post('/crossplay/ready', (req, res) => reply(res, crossplay.setReady(rbKey(req.body || {}), req.body?.ready === true)));
+    r.post('/crossplay/launch', (req, res) => reply(res, crossplay.launch(rbKey(req.body || {}))));
+    r.post('/crossplay/chat', async (req, res) => reply(res, await crossplay.chat(rbKey(req.body || {}), req.body?.text, { ageGroup: 'teen' })));
+    // Poll: the game sends each squad member's live status (Lobby / In match / …) and gets the squad back.
+    r.post('/crossplay/state', (req, res) => {
+      const b = req.body || {};
+      res.json(crossplay.state(rbKey(b), { name: b.name, status: b.status }));
+    });
+  }
 
   return r;
 };

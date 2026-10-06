@@ -290,3 +290,14 @@ body.has-verify .app { height: calc(100vh - 62px - 46px); }
   input[type='text'], input[type='email'], input[type='search'], input[type='date'], input:not([type]), textarea { cursor: text !important; }
   button:disabled, .btn:disabled, .switch input:disabled { cursor: not-allowed !important; }
 }
+/* ---------- cross-play squad */
+.squad-open { width: 100%; margin-top: 10px; }
+.sq-badge { font-size: 20px; width: 30px; text-align: center; flex: none; }
+.squad-messages { max-height: 220px; min-height: 110px; }
+#squadIn .members { max-height: 210px; margin-bottom: 4px; }
+#squadIn .row { display: flex; gap: 8px; margin-top: 10px; }
+.squad-launch { background: rgba(255, 220, 50, 0.16); border: 1px solid var(--yellow); color: #ffe98a; font-family: var(--head); text-align: center; padding: 10px; border-radius: 10px; margin-bottom: 12px; }
+.squad-results { margin: 12px 0; display: grid; gap: 4px; }
+.sq-result { background: rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 6px 10px; font-size: 14px; }
+.err:empty { display: none; }
+.err { color: #ff8da1; margin-top: 8px; }

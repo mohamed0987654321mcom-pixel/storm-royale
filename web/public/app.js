@@ -193,6 +193,8 @@
     renderRooms();
     renderRoom();
     renderMessages();
+    const sq = $('#openSquad');
+    if (sq) sq.hidden = !(S.me && S.me.ageGroup !== 'kid');
   }
 
   function onRoom(room) {
@@ -694,6 +696,100 @@
     if (voice && voice.active) voice.leave(true);
     await api('/api/auth/logout');
     location.href = '/';
+  });
+
+  // ---------------------------------------------------------------- cross-play squad
+  // Team up with friends on Neoblox or in the Roblox game. The website player is one member of a
+  // shared squad; polling keeps it live (members on other surfaces come and go via their own
+  // heartbeats). See server /api/crossplay/* and lib/crossplay.js.
+  const Squad = { timer: null, lastLaunch: 0 };
+  const SURFACE = { storm: { emoji: '🌩️', label: 'Storm Royale' }, roblox: { emoji: '🧱', label: 'Roblox' }, neoblox: { emoji: '🟦', label: 'Neoblox' } };
+
+  async function squadApi(path, body) {
+    const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Something went wrong');
+    return data;
+  }
+
+  $('#openSquad').addEventListener('click', () => {
+    $('#squadModal').showModal();
+    pollSquad();
+    Squad.timer = setInterval(pollSquad, 3000);
+  });
+  $('#squadModal').addEventListener('close', () => { clearInterval(Squad.timer); Squad.timer = null; });
+
+  async function pollSquad() {
+    try {
+      const res = await fetch('/api/crossplay/state');
+      if (res.ok) renderSquad(await res.json());
+    } catch {}
+  }
+
+  function renderSquad(d) {
+    const inSquad = Boolean(d && d.inSquad);
+    $('#squadOut').hidden = inSquad;
+    $('#squadIn').hidden = !inSquad;
+    if (!inSquad) return;
+    $('#squadCodePill').textContent = 'CODE ' + d.code;
+    const launchOn = Boolean(d.launch);
+    $('#squadLaunch').hidden = !launchOn;
+    if (launchOn && d.launch.at > Squad.lastLaunch) {
+      Squad.lastLaunch = d.launch.at;
+      toast('🚀 Squad launched — jump into a match!');
+    }
+    $('#squadMembers').replaceChildren(
+      ...d.members.map((m) => {
+        const s = SURFACE[m.surface] || { emoji: '🎮', label: m.surface };
+        return h('li', { class: 'member' + (m.isYou ? ' mine' : '') },
+          h('span', { class: 'sq-badge', title: s.label }, s.emoji),
+          h('div', { class: 'info' }, h('div', { class: 'nm' }, m.name + (m.leader ? ' 👑' : '')), h('div', { class: 'st' }, m.status || 'In lobby')),
+          m.ready ? h('span', { class: 'ready' }, 'READY') : null);
+      }),
+    );
+    const me = d.members.find((m) => m.isYou);
+    $('#squadReady').textContent = me && me.ready ? 'NOT READY' : 'READY UP';
+    $('#squadReady').dataset.ready = me && me.ready ? '1' : '0';
+    $('#squadLaunchBtn').hidden = !d.isLeader;
+    if (d.results && d.results.length) {
+      $('#squadResults').hidden = false;
+      $('#squadResults').replaceChildren(
+        h('h3', { class: 'sub' }, 'LAST MATCH'),
+        ...d.results.map((r) => h('div', { class: 'sq-result' }, `${r.won ? '🏆' : '#' + r.placement} ${r.name} — ${r.kills} elim${r.kills === 1 ? '' : 's'}`)),
+      );
+    } else $('#squadResults').hidden = true;
+    $('#squadChat').replaceChildren(
+      ...(d.chat || []).map((c) =>
+        c.system
+          ? h('div', { class: 'msg system' }, c.text)
+          : h('div', { class: 'msg' }, h('span', { class: 'who' }, `${SURFACE[c.surface]?.emoji || ''} ${c.name}`), c.text)),
+    );
+    $('#squadChat').scrollTop = $('#squadChat').scrollHeight;
+  }
+
+  $('#squadCreate').addEventListener('click', async () => {
+    $('#squadOutErr').textContent = '';
+    try { renderSquad((await squadApi('/api/crossplay/create')).squad); } catch (e) { $('#squadOutErr').textContent = e.message; }
+  });
+  $('#squadJoinForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('#squadOutErr').textContent = '';
+    try { renderSquad((await squadApi('/api/crossplay/join', { code: $('#squadJoinCode').value.trim() })).squad); $('#squadJoinCode').value = ''; } catch (err) { $('#squadOutErr').textContent = err.message; }
+  });
+  $('#squadLeave').addEventListener('click', async () => { try { await squadApi('/api/crossplay/leave'); renderSquad({ inSquad: false }); } catch {} });
+  $('#squadReady').addEventListener('click', async () => {
+    const ready = $('#squadReady').dataset.ready !== '1';
+    try { renderSquad((await squadApi('/api/crossplay/ready', { ready })).squad); } catch (e) { toast(e.message, { bad: true }); }
+  });
+  $('#squadLaunchBtn').addEventListener('click', async () => {
+    try { renderSquad((await squadApi('/api/crossplay/launch')).squad); } catch (e) { toast(e.message, { bad: true }); }
+  });
+  $('#squadChatForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = $('#squadChatInput').value.trim();
+    if (!text) return;
+    $('#squadChatErr').textContent = '';
+    try { const r = await squadApi('/api/crossplay/chat', { text }); $('#squadChatInput').value = ''; renderSquad(r.squad); } catch (err) { $('#squadChatErr').textContent = err.message; }
   });
 
   // ---------------------------------------------------------------- boot

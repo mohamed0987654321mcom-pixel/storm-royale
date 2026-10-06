@@ -11,6 +11,7 @@ const gameRoutes = require('./lib/game');
 const parentRoutes = require('./lib/parents');
 const avatarRoutes = require('./lib/avatar');
 const mparadiseRoutes = require('./lib/mparadise');
+const makeCrossplay = require('./lib/crossplay');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMINS = String(process.env.ADMIN_EMAILS || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
@@ -47,9 +48,13 @@ const rt = attachRealtime(server, {
   notifyParent: (...args) => parents.notifyParent(...args),
 });
 parents = parentRoutes({ rt, publicUrl });
+// Cross-play squads (web + Roblox + Neoblox). Never run chat unmoderated on the live site —
+// same rule realtime.js uses for its own chat.
+const crossplaySafetyOff = !moderation.enabled && process.env.NODE_ENV === 'production';
+const crossplay = makeCrossplay({ moderate: moderation.moderate, safetyOff: crossplaySafetyOff });
 app.use(parents.router);
 app.use(avatarRoutes());
-app.use(mparadiseRoutes(rt));
+app.use(mparadiseRoutes(rt, crossplay));
 
 const baseUrl = (req) => process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
 
@@ -334,6 +339,23 @@ app.post('/api/roblox/unlink', needUser(async (req, res, user) => {
   res.json({ ok: true });
 }));
 
+// ------------------------------------------------------------------ cross-play squads
+// Squad up with friends playing on the other surfaces (the Roblox game, or Neoblox). The
+// website player is one member of a shared squad whose other members may be in Roblox or on
+// Neoblox. See lib/crossplay.js. Kid accounts are kept out of squads (code = stranger contact).
+const crossMember = (user) => ({ surface: 'storm', id: user.id, name: user.name, restricted: { isKid: auth.ageGroup(user) === 'kid' } });
+const crossKey = (user) => `storm:${user.id}`;
+const crossReply = (res, result) => (result.error ? res.status(result.kid ? 403 : 400).json({ error: result.error }) : res.json(result));
+
+app.post('/api/crossplay/create', needUser(async (req, res, user) => crossReply(res, crossplay.create(crossMember(user)))));
+app.post('/api/crossplay/join', needUser(async (req, res, user) => crossReply(res, crossplay.join(req.body?.code, crossMember(user)))));
+app.post('/api/crossplay/leave', needUser(async (req, res, user) => res.json(crossplay.leave(crossKey(user)))));
+app.post('/api/crossplay/ready', needUser(async (req, res, user) => crossReply(res, crossplay.setReady(crossKey(user), req.body?.ready === true))));
+app.post('/api/crossplay/launch', needUser(async (req, res, user) => crossReply(res, crossplay.launch(crossKey(user)))));
+app.post('/api/crossplay/chat', needUser(async (req, res, user) => crossReply(res, await crossplay.chat(crossKey(user), req.body?.text, { ageGroup: auth.ageGroup(user) }))));
+// Poll: refresh presence (name) and return the live squad view, or { inSquad:false }.
+app.get('/api/crossplay/state', needUser(async (req, res, user) => res.json(crossplay.state(crossKey(user), { name: user.name, restricted: { isKid: auth.ageGroup(user) === 'kid' } }))));
+
 // ------------------------------------------------------------------ admin
 app.get('/api/admin/reports', needAdmin(async (req, res) => {
   const reports = await db.listReports(req.query.status === 'closed' ? 'closed' : 'open');
@@ -371,8 +393,8 @@ app.post('/api/admin/reports/:id', needAdmin(async (req, res) => {
 }));
 
 // ------------------------------------------------------------------ game + pages
-app.use('/api/game', gameRoutes(rt));
-app.get('/health', (req, res) => res.json({ ok: true, db: db.kind, moderation: moderation.enabled ? moderation.model : 'off', ...rt.stats() }));
+app.use('/api/game', gameRoutes(rt, crossplay));
+app.get('/health', (req, res) => res.json({ ok: true, db: db.kind, moderation: moderation.enabled ? moderation.model : 'off', ...rt.stats(), ...crossplay.stats() }));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/parent', (req, res) => res.sendFile(path.join(__dirname, 'public', 'parent.html')));

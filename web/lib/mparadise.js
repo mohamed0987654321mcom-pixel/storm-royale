@@ -43,7 +43,7 @@ async function callNeoblox(path, body) {
   return data;
 }
 
-module.exports = function mparadiseRoutes(rt) {
+module.exports = function mparadiseRoutes(rt, crossplay) {
   const r = express.Router();
 
   const needUser = (handler) => async (req, res) => {
@@ -119,6 +119,31 @@ module.exports = function mparadiseRoutes(rt) {
     await rt.refreshUser(user.id);
     res.json({ ok: true });
   });
+
+  // ---- cross-play squads: Neoblox's server relays its players' squad actions here (never the
+  // browser). A Neoblox member is keyed `neoblox:<neobloxId>`; everything else is the shared
+  // crossplay hub (see lib/crossplay.js). Neoblox sends the player's name + restriction flags so
+  // the hub can show them and keep kid accounts out.
+  if (crossplay) {
+    r.use('/api/mparadise/party', (req, res, next) => (keyOk(req.get('x-mparadise-key')) ? next() : res.status(401).json({ error: 'bad key' })));
+
+    const nbMember = (b) => ({ surface: 'neoblox', id: b.neobloxId, name: b.name, restricted: b.restricted || null });
+    const nbKey = (b) => `neoblox:${String(b.neobloxId || '')}`;
+    const reply = (res, result) => (result.error ? res.status(result.kid ? 403 : 400).json(result) : res.json(result));
+
+    r.post('/api/mparadise/party/create', (req, res) => reply(res, crossplay.create(nbMember(req.body || {}))));
+    r.post('/api/mparadise/party/join', (req, res) => reply(res, crossplay.join(req.body?.code, nbMember(req.body || {}))));
+    r.post('/api/mparadise/party/leave', (req, res) => res.json(crossplay.leave(nbKey(req.body || {}))));
+    r.post('/api/mparadise/party/ready', (req, res) => reply(res, crossplay.setReady(nbKey(req.body || {}), req.body?.ready === true)));
+    r.post('/api/mparadise/party/launch', (req, res) => reply(res, crossplay.launch(nbKey(req.body || {}))));
+    r.post('/api/mparadise/party/result', (req, res) => reply(res, crossplay.reportResult(nbKey(req.body || {}), req.body || {})));
+    r.post('/api/mparadise/party/chat', async (req, res) => reply(res, await crossplay.chat(nbKey(req.body || {}), req.body?.text, { ageGroup: 'teen' })));
+    // Poll: refresh presence and return the squad view (or { inSquad:false }).
+    r.post('/api/mparadise/party/state', (req, res) => {
+      const b = req.body || {};
+      res.json(crossplay.state(nbKey(b), { name: b.name, restricted: b.restricted || null, status: b.status }));
+    });
+  }
 
   return r;
 };

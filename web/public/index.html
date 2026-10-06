@@ -100,6 +100,7 @@
         </div>
       </div>
       <p class="hint" id="partyHint">In a party, chat and voice switch to just your squad.</p>
+      <button class="btn squad-open" id="openSquad" type="button" hidden>🌐 CROSS-PLAY SQUAD</button>
       <a class="style-link" href="/locker">
         <span class="big-emoji">🎨</span>
         <span><b>MY STYLE</b><br><span class="muted">Dress up with the Roblox items you own. Your look shows up in the game.</span></span>
@@ -188,6 +189,38 @@
       <a class="btn ghost" href="/admin" id="adminLink" hidden>ADMIN</a>
       <button class="btn danger" id="logout">SIGN OUT</button>
     </div>
+  </dialog>
+
+  <!-- cross-play squad -->
+  <dialog id="squadModal" class="card modal">
+    <button class="close" data-close>✕</button>
+    <h2>CROSS-PLAY SQUAD</h2>
+    <p class="muted">Team up with friends playing on Neoblox or in the Roblox game. Chat, ready up and launch together — then compare results. You each play the match on your own platform.</p>
+    <div id="squadOut">
+      <div class="party-actions">
+        <button class="btn yellow" id="squadCreate" type="button">CREATE A SQUAD</button>
+        <form class="inline" id="squadJoinForm"><input id="squadJoinCode" maxlength="8" placeholder="SQUAD CODE" autocomplete="off"><button class="btn">JOIN</button></form>
+      </div>
+      <p class="muted err" id="squadOutErr"></p>
+    </div>
+    <div id="squadIn" hidden>
+      <div class="panel-head">
+        <span class="pill" id="squadCodePill" title="Share this code with friends on any platform"></span>
+        <button class="btn danger tiny" id="squadLeave" type="button">LEAVE</button>
+      </div>
+      <div class="squad-launch" id="squadLaunch" hidden>🚀 LAUNCH! Jump into a match now.</div>
+      <ul class="members" id="squadMembers"></ul>
+      <div class="row">
+        <button class="btn yellow" id="squadReady" type="button">READY UP</button>
+        <button class="btn" id="squadLaunchBtn" type="button" hidden>🚀 LAUNCH SQUAD</button>
+      </div>
+      <div class="squad-results" id="squadResults" hidden></div>
+      <h3 class="sub">SQUAD CHAT</h3>
+      <div class="messages squad-messages" id="squadChat" aria-live="polite"></div>
+      <form class="composer" id="squadChatForm"><input id="squadChatInput" maxlength="200" placeholder="Say something nice…" autocomplete="off"><button class="btn yellow">SEND</button></form>
+      <p class="hint err" id="squadChatErr"></p>
+    </div>
+    <p class="hint">🛡️ Squad chat is checked by the same AI moderator. Kid accounts can't use cross-play squads.</p>
   </dialog>
 
   <!-- rules -->
