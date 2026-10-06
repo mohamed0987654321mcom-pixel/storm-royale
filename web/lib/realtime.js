@@ -139,6 +139,7 @@ function attach(httpServer, { iceServers, admins, notifyParent = async () => {} 
       typeNeedsEmail: canChat(o) && !emailOk(o),
       voiceNeedsEmail: voiceAllowed(o) && !emailOk(o),
       canQuick: canQuick(o),
+      mparadise: { linked: Boolean(u.neobloxId), neobloxUsername: u.neobloxUsername || null, sharedTotal: (u.robloxCoinsMirror || 0) + (u.neobloxTokensMirror || 0) },
       ...(kid
         ? {
           kid: {

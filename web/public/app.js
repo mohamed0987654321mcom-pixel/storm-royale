@@ -602,6 +602,13 @@
       $('#robloxName').textContent = me.robloxName;
       $('#robloxVerify').hidden = true;
     }
+    const mp = me.mparadise || { linked: false };
+    $('#mpLinked').hidden = !mp.linked;
+    $('#mpUnlinked').hidden = mp.linked;
+    if (mp.linked) {
+      $('#mpNeobloxName').textContent = mp.neobloxUsername || 'a Neoblox account';
+      $('#mpSharedTotal').textContent = mp.sharedTotal;
+    }
     $('#blockedList').replaceChildren(
       ...(me.blocked.length
         ? me.blocked.map((id) =>
@@ -636,6 +643,22 @@
   });
   $('#unlinkRoblox').addEventListener('click', async () => {
     await api('/api/roblox/unlink');
+    setTimeout(renderProfile, 400);
+  });
+  $('#mpForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('#mpError').textContent = '';
+    try {
+      const data = await api('/api/mparadise/claim', { code: $('#mpCode').value.trim() });
+      toast(`Linked to ${data.neobloxUsername}! 🌪️`);
+      $('#mpCode').value = '';
+      setTimeout(renderProfile, 400);
+    } catch (err) {
+      $('#mpError').textContent = err.message;
+    }
+  });
+  $('#unlinkMparadise').addEventListener('click', async () => {
+    await api('/api/mparadise/unlink');
     setTimeout(renderProfile, 400);
   });
   // ---------------------------------------------------------------- confirm email ("skip for now" accounts)

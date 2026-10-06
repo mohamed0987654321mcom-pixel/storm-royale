@@ -33,6 +33,14 @@ CREATE INDEX IF NOT EXISTS users_pending_email ON users (pending_email);
 -- avatar builder ("MY STYLE"): the saved look, and a version the game uses to notice changes
 ALTER TABLE users ADD COLUMN IF NOT EXISTS look JSONB;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS look_ver BIGINT NOT NULL DEFAULT 0;
+-- MPARADISE link: one shared identity + token balance with Neoblox (mparadise.js owns this).
+-- Each mirror column has exactly one writer (see mparadise.js's comment) so there's never a
+-- race to reconcile between the two sites — the shared total is just the sum of both.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS neoblox_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS neoblox_username TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS neoblox_tokens_mirror INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS roblox_coins_mirror INT NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS users_neoblox_id ON users (neoblox_id) WHERE neoblox_id IS NOT NULL;
 -- the player's owned Roblox items, read in the game with their permission (kept apart: it can be big)
 CREATE TABLE IF NOT EXISTS avatar_items (
   user_id INT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -77,6 +85,10 @@ const FIELDS = {
   emailVerified: 'email_verified',
   look: 'look',
   lookVer: 'look_ver',
+  neobloxId: 'neoblox_id',
+  neobloxUsername: 'neoblox_username',
+  neobloxTokensMirror: 'neoblox_tokens_mirror',
+  robloxCoinsMirror: 'roblox_coins_mirror',
 };
 const JSON_COLS = new Set(['blocked', 'stats', 'kid_settings', 'friends', 'look']);
 const REQ_FIELDS = { accepted: 'accepted', fromParentOk: 'from_parent_ok', toParentOk: 'to_parent_ok' };
@@ -103,6 +115,10 @@ function rowToUser(r) {
     emailVerified: r.email_verified !== false,
     look: r.look || null,
     lookVer: Number(r.look_ver || 0),
+    neobloxId: r.neoblox_id || null,
+    neobloxUsername: r.neoblox_username || null,
+    neobloxTokensMirror: Number(r.neoblox_tokens_mirror || 0),
+    robloxCoinsMirror: Number(r.roblox_coins_mirror || 0),
     createdAt: new Date(r.created_at),
   };
 }
@@ -146,6 +162,7 @@ function pgStore(url) {
     findUserById: async (id) => rowToUser(await one('SELECT * FROM users WHERE id = $1', [id])),
     findUserByName: async (name) => rowToUser(await one('SELECT * FROM users WHERE lower(name) = lower($1)', [name])),
     findUserByRoblox: async (rid) => rowToUser(await one('SELECT * FROM users WHERE roblox_id = $1', [rid])),
+    findUserByNeoblox: async (nid) => rowToUser(await one('SELECT * FROM users WHERE neoblox_id = $1', [nid])),
     findUsersByRoblox: async (ids) => (await many('SELECT * FROM users WHERE roblox_id = ANY($1::bigint[])', [ids])).map(rowToUser),
     findUsersByIds: async (ids) => (await many('SELECT * FROM users WHERE id = ANY($1::int[])', [ids])).map(rowToUser),
     findKidsByParent: async (email) => (await many('SELECT * FROM users WHERE parent_email = $1 ORDER BY id', [email])).map(rowToUser),
@@ -238,6 +255,7 @@ function memoryStore() {
     findUserById: async (id) => copy(users.find((u) => u.id === id)),
     findUserByName: async (name) => copy(users.find((u) => u.name.toLowerCase() === String(name).toLowerCase())),
     findUserByRoblox: async (rid) => copy(users.find((u) => u.robloxId === Number(rid))),
+    findUserByNeoblox: async (nid) => copy(users.find((u) => u.neobloxId === nid)),
     findUsersByRoblox: async (ids) => users.filter((u) => ids.map(Number).includes(u.robloxId)).map(copy),
     findUsersByIds: async (ids) => users.filter((u) => ids.map(Number).includes(u.id)).map(copy),
     findKidsByParent: async (email) => users.filter((u) => u.parentEmail === email).map(copy),
@@ -247,6 +265,7 @@ function memoryStore() {
       const u = {
         id: nextUser++, email: email || null, pendingEmail, emailVerified, name, birthDate, robloxId: null, robloxName: null, strikes: 0, bannedUntil: null, mutedUntil: null,
         blocked: [], stats: {}, parentEmail, consent, kidSettings: { chat: false, voice: false, quick: true }, friends: [], look: null, lookVer: 0, createdAt: new Date(),
+        neobloxId: null, neobloxUsername: null, neobloxTokensMirror: 0, robloxCoinsMirror: 0,
       };
       users.push(u);
       return copy(u);
@@ -257,6 +276,7 @@ function memoryStore() {
       for (const [k, v] of Object.entries(fields)) {
         if (!FIELDS[k]) throw new Error('bad field ' + k);
         if (k === 'robloxId' && v != null && users.some((x) => x.robloxId === v && x.id !== id)) throw Object.assign(new Error('duplicate'), { code: '23505' });
+        if (k === 'neobloxId' && v != null && users.some((x) => x.neobloxId === v && x.id !== id)) throw Object.assign(new Error('duplicate'), { code: '23505' });
         if (k === 'email' && v != null && users.some((x) => x.email === v && x.id !== id)) throw Object.assign(new Error('duplicate'), { code: '23505' });
         u[k] = k === 'look' ? clone(v) : v;
       }

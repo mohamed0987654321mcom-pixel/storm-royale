@@ -172,6 +172,16 @@
       </ol>
       <button class="btn yellow" id="verifyRoblox">VERIFY</button>
     </div>
+    <h3 class="sub">NEOBLOX ACCOUNT</h3>
+    <div id="mpLinked" hidden>
+      <p>Linked to <b id="mpNeobloxName"></b>. Your Storm Royale coins and Neoblox tokens now share one total: 🪙 <b id="mpSharedTotal">0</b>.</p>
+      <button class="btn ghost" id="unlinkMparadise">UNLINK</button>
+    </div>
+    <div id="mpUnlinked">
+      <p class="hint">On Neoblox, sign in and tap <b>Link Storm Royale account</b> to get a code, then enter it here.</p>
+      <form class="inline" id="mpForm"><input id="mpCode" maxlength="20" placeholder="Code from Neoblox"><button class="btn">LINK</button></form>
+      <p class="muted" id="mpError"></p>
+    </div>
     <h3 class="sub">BLOCKED PLAYERS</h3>
     <ul class="blocked" id="blockedList"></ul>
     <div class="row end">

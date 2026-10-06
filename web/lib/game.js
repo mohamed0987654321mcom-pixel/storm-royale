@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const express = require('express');
 const db = require('./db');
 const looks = require('./looks');
+const mparadise = require('./mparadise');
 
 const STATUSES = new Set(['Lobby', 'Warm-up', 'On the bus', 'In match', 'Spectating']);
 
@@ -24,7 +25,11 @@ module.exports = function gameRoutes(rt) {
   });
 
   // Every ~10 s each Roblox server reports who's playing and gets back their parties + party chat.
-  // body: { players: [{ robloxId, status }] }
+  // body: { players: [{ robloxId, status, coins }] }
+  // `coins` (optional) is also how the MPARADISE link stays current: Roblox Coins are always
+  // authoritative here (the game's own DataStore), this just mirrors the latest number for the
+  // website and, for linked players, forwards it on to Neoblox — see mparadise.js's comment on
+  // why that's a safe thing to do on every heartbeat with no reconciliation needed.
   r.post('/sync', async (req, res) => {
     const list = Array.isArray(req.body?.players) ? req.body.players.slice(0, 60) : [];
     const ids = list.map((p) => Number(p.robloxId)).filter((n) => Number.isSafeInteger(n) && n > 0);
@@ -38,6 +43,13 @@ module.exports = function gameRoutes(rt) {
       rt.setGamePresence(u.id, status);
       // lookVer: when it changes, the game fetches the new look (/look) and dresses the player
       out[String(u.robloxId)] = { name: u.name, lookVer: u.lookVer || 0, ...rt.gameInfoFor(u.id) };
+      const coins = Math.max(0, Math.floor(Number(p.coins) || 0));
+      if (Number.isFinite(coins) && coins !== u.robloxCoinsMirror) {
+        u.robloxCoinsMirror = coins; // keep this in-memory copy current for the push below
+        db.updateUser(u.id, { robloxCoinsMirror: coins })
+          .then(() => mparadise.pushCoinsToNeoblox(u))
+          .catch((err) => console.warn('[game] coins mirror update failed:', err.message));
+      }
     }
     res.json({ players: out });
   });

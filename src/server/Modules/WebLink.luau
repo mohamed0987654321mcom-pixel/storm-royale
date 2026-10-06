@@ -191,7 +191,11 @@ end
 local function syncOnce()
 	local list = {}
 	for _, p in Players:GetPlayers() do
-		table.insert(list, { robloxId = p.UserId, status = STATUS[p:GetAttribute("Mode") or "Menu"] or "Lobby" })
+		local d = Core.Data[p]
+		-- `coins` rides along on the heartbeat that's already running: the website mirrors it
+		-- (for its own display and, for MPARADISE-linked players, to forward on to Neoblox).
+		-- Roblox's own DataStore stays the one authoritative place Coins actually live.
+		table.insert(list, { robloxId = p.UserId, status = STATUS[p:GetAttribute("Mode") or "Menu"] or "Lobby", coins = d and d.Coins or 0 })
 	end
 	if #list == 0 then
 		return

@@ -10,6 +10,7 @@ const attachRealtime = require('./lib/realtime');
 const gameRoutes = require('./lib/game');
 const parentRoutes = require('./lib/parents');
 const avatarRoutes = require('./lib/avatar');
+const mparadiseRoutes = require('./lib/mparadise');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMINS = String(process.env.ADMIN_EMAILS || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
@@ -48,6 +49,7 @@ const rt = attachRealtime(server, {
 parents = parentRoutes({ rt, publicUrl });
 app.use(parents.router);
 app.use(avatarRoutes());
+app.use(mparadiseRoutes(rt));
 
 const baseUrl = (req) => process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
 
@@ -267,7 +269,11 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', needUser(async (req, res, user) => {
-  res.json({ id: user.id, name: user.name, email: user.email || user.pendingEmail, emailVerified: user.emailVerified !== false, ageGroup: auth.ageGroup(user), consent: user.consent, robloxName: user.robloxName, isAdmin: isAdminUser(user) });
+  res.json({
+    id: user.id, name: user.name, email: user.email || user.pendingEmail, emailVerified: user.emailVerified !== false,
+    ageGroup: auth.ageGroup(user), consent: user.consent, robloxName: user.robloxName, isAdmin: isAdminUser(user),
+    mparadise: { linked: Boolean(user.neobloxId), neobloxUsername: user.neobloxUsername || null, sharedTotal: (user.robloxCoinsMirror || 0) + (user.neobloxTokensMirror || 0) },
+  });
 }));
 
 const resends = new Map();
