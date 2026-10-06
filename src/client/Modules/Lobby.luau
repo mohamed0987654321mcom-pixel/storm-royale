@@ -22,6 +22,7 @@ new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = U
 local coinL = text(topBar, "🪙 0", UDim2.new(0, 200, 1, 0), UDim2.new(1, -220, 0, 0), FONT_H, 26, WHITE, Enum.TextXAlignment.Right)
 
 local Pages = {}
+Lobby.Pages = Pages -- other panels (Squad) add themselves to a page
 local TabButtons = {}
 local function showTab(name: string)
 	if name ~= "LOCKER" then

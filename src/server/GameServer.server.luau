@@ -14,6 +14,7 @@
 --   Match         countdown → bus → storm → winner
 --   Remotes       client requests
 --   WebLink       website parties, party chat, stats (needs HTTP + API key, see the file)
+--   CrossSquad    cross-play squads with friends signed in elsewhere (rides on WebLink)
 
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
@@ -30,6 +31,7 @@ local Match = require(Modules.Match)
 local Remotes = require(Modules.Remotes)
 local Storm = require(Modules.Storm)
 local WebLink = require(Modules.WebLink)
+local CrossSquad = require(Modules.CrossSquad)
 
 -- an empty "Health" script turns off Roblox's default health regen
 do
@@ -77,5 +79,6 @@ Loot.resetLoot()
 Storm.reset()
 PlayerFlow.start()
 WebLink.start()
+CrossSquad.start()
 Bots.startLoop()
 Match.startLoop()

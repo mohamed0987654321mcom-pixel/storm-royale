@@ -8,6 +8,7 @@ local Building = require(script.Parent.Building)
 local Cosmetics = require(script.Parent.Cosmetics)
 local Avatar = require(script.Parent.Avatar)
 local WebLink = require(script.Parent.WebLink)
+local CrossSquad = require(script.Parent.CrossSquad)
 local SkyBus = require(script.Parent.SkyBus)
 local PlayerFlow = require(script.Parent.PlayerFlow)
 local Inventory = require(script.Parent.Inventory)
@@ -215,6 +216,11 @@ Handlers.AvatarInventory = function(plr: Player, chunk, done)
 	end
 	lastUpload[plr] = os.clock()
 	WebLink.uploadInventory(plr, Avatar.sanitizeInventory(buf))
+end
+
+-- cross-play squads (see CrossSquad) ---------------------------------------------------
+Handlers.Squad = function(plr: Player, action, arg)
+	CrossSquad.action(plr, action, arg)
 end
 
 Players.PlayerRemoving:Connect(function(plr)

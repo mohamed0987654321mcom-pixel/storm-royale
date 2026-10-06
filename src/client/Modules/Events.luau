@@ -8,6 +8,7 @@ local Hud = require(script.Parent.Hud)
 local Effects = require(script.Parent.Effects)
 local Lobby = require(script.Parent.Lobby)
 local AvatarEditor = require(script.Parent.AvatarEditor)
+local Squad = require(script.Parent.Squad)
 local C, Net, S, plr = Core.C, Core.Net, Core.S, Core.plr
 local WHITE, YELLOW, TOUCH = Core.WHITE, Core.YELLOW, Core.TOUCH
 local UI = Hud.UI
@@ -55,6 +56,8 @@ local function onServer(action: string, ...)
 		Hud.addFeed("🏆 " .. a[1] .. " won the match!", YELLOW)
 	elseif action == "WebParty" then
 		Lobby.setWebParty(a[1])
+	elseif action == "Squad" then
+		Squad.set(a[1])
 	elseif action == "AvatarStart" then
 		AvatarEditor.onStart(a[1])
 	elseif action == "AvatarSaved" then

@@ -33,6 +33,29 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
   const squads = new Map(); // id -> squad
   const byCode = new Map(); // CODE -> squad
   const memberSquad = new Map(); // memberKey -> squadId
+  const chatTimes = new Map(); // memberKey -> [timestamps] (chat rate limit)
+
+  const msgId = () => crypto.randomBytes(6).toString('hex');
+  // System lines carry structured fields (event/who/whoKey) besides the ready-made text, so a
+  // client that has to re-filter names (the Roblox game: TextService per viewer) can rebuild the
+  // line from a filtered name instead of showing the raw one.
+  function systemLine(squad, event, m) {
+    const text =
+      event === 'join' ? `${m.name} joined the squad`
+        : event === 'leave' ? `${m.name} left the squad`
+          : `\uD83D\uDE80 ${m.name} launched the squad \u2014 jump into a match!`;
+    squad.chat.push({ id: msgId(), system: true, event, who: m.name, whoKey: m.key, text, ts: Date.now() });
+    if (squad.chat.length > CHAT_KEEP) squad.chat.shift();
+  }
+
+  function chatRateOk(key) {
+    const now = Date.now();
+    const list = (chatTimes.get(key) || []).filter((t) => now - t < 10000);
+    if (list.length >= 5) return false;
+    list.push(now);
+    chatTimes.set(key, list);
+    return true;
+  }
 
   function newCode() {
     let code;
@@ -167,8 +190,7 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
         this.leave(m.key);
         squad.members.set(m.key, m);
         memberSquad.set(m.key, squad.id);
-        squad.chat.push({ system: true, text: `${m.name} joined the squad`, ts: Date.now() });
-        if (squad.chat.length > CHAT_KEEP) squad.chat.shift();
+        systemLine(squad, 'join', m);
       } else {
         // rejoin (e.g. reconnected) just refreshes presence
         const ex = squad.members.get(m.key);
@@ -182,12 +204,9 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
       const squad = squadOf(key);
       if (!squad) return { ok: true };
       const m = squad.members.get(key);
-      const name = m ? m.name : null;
       dropMember(squad, key);
-      if (name && squads.has(squad.id)) {
-        squad.chat.push({ system: true, text: `${name} left the squad`, ts: Date.now() });
-        if (squad.chat.length > CHAT_KEEP) squad.chat.shift();
-      }
+      chatTimes.delete(key);
+      if (m && squads.has(squad.id)) systemLine(squad, 'leave', m);
       return { ok: true };
     },
 
@@ -215,8 +234,7 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
         m.result = null;
         m.ready = false;
       }
-      t.squad.chat.push({ system: true, text: `🚀 ${t.m.name} launched the squad — jump into a match!`, ts: Date.now() });
-      if (t.squad.chat.length > CHAT_KEEP) t.squad.chat.shift();
+      systemLine(t.squad, 'launch', t.m);
       return { ok: true, squad: view(t.squad, key) };
     },
 
@@ -239,6 +257,7 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
       if (safetyOff) return { error: 'Chat turns on as soon as safety moderation is set up.' };
       text = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
       if (!text) return { error: 'Say something!' };
+      if (!chatRateOk(key)) return { error: 'Slow down a little!' };
       const ctx = t.squad.chat.filter((c) => !c.system).slice(-6).map((c) => ({ name: c.name, text: c.text }));
       let verdict = { allow: true };
       try {
@@ -247,7 +266,7 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
         return { error: 'Couldn’t check that message, try again.' };
       }
       if (!verdict.allow) return { error: verdict.reason || 'That message was blocked.', blocked: true };
-      const msg = { name: t.m.name, surface: t.m.surface, text, ts: Date.now() };
+      const msg = { id: msgId(), key: t.m.key, name: t.m.name, surface: t.m.surface, text, ts: Date.now() };
       t.squad.chat.push(msg);
       if (t.squad.chat.length > CHAT_KEEP) t.squad.chat.shift();
       return { ok: true, msg, squad: view(t.squad, key) };

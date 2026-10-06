@@ -247,4 +247,46 @@ function WebLink.start()
 	end)
 end
 
+-------------------------------------------------------------------------------
+-- for other modules (CrossSquad)
+-------------------------------------------------------------------------------
+
+function WebLink.enabled(): boolean
+	return apiKey ~= nil
+end
+
+WebLink.robloxName = robloxName
+
+-- an authenticated request that also hands back the website's own error message on a failure
+-- (e.g. "No squad with that code."), so the player can be told why
+function WebLink.request(path: string, body: any): (any?, string?)
+	if not apiKey then
+		return nil, "offline"
+	end
+	local ok, res = pcall(function()
+		return HttpService:RequestAsync({
+			Url = C.WEB_URL .. path,
+			Method = "POST",
+			Headers = { ["Content-Type"] = "application/json", ["x-api-key"] = apiKey },
+			Body = HttpService:JSONEncode(body),
+		})
+	end)
+	if not ok then
+		warn("[WebLink] request failed: " .. tostring(res))
+		return nil, "offline"
+	end
+	local okJson, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+	if not okJson then
+		data = nil
+	end
+	if not res.Success then
+		local msg = type(data) == "table" and type(data.error) == "string" and data.error or nil
+		if not msg then
+			warn(("[WebLink] %s -> HTTP %d"):format(path, res.StatusCode))
+		end
+		return nil, msg or "unavailable"
+	end
+	return data, nil
+end
+
 return WebLink
