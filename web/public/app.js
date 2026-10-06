@@ -792,6 +792,68 @@
     try { const r = await squadApi('/api/crossplay/chat', { text }); $('#squadChatInput').value = ''; renderSquad(r.squad); } catch (err) { $('#squadChatErr').textContent = err.message; }
   });
 
+  // ---------------------------------------------------------------- tournament
+  // Storm Royale's cross-platform cup: Roblox matches and Neoblox Thunder Battle rounds on one board.
+  const Cup = { timer: null, tab: 'players', data: null, id: null };
+  const CUP_BADGE = { roblox: '🧱', neoblox: '🟦' };
+  const cupLeft = (ms) => {
+    const m = Math.max(0, Math.floor(ms / 60000));
+    const d = Math.floor(m / 1440);
+    const hr = Math.floor((m % 1440) / 60);
+    return d ? `${d}d ${hr}h` : hr ? `${hr}h ${m % 60}m` : `${m % 60}m`;
+  };
+
+  async function loadCup(id) {
+    try {
+      const r = await fetch(id ? `/api/tournaments/${encodeURIComponent(id)}` : '/api/tournaments');
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'The tournament is unavailable right now.');
+      // /api/tournaments/:id returns just the board; keep the list from the last full load
+      Cup.data = d.board !== undefined ? d : { tournaments: (Cup.data && Cup.data.tournaments) || [], board: d };
+      Cup.id = Cup.data.board ? Cup.data.board.tournament.id : null;
+      renderCup();
+    } catch (err) {
+      $('#cupBody').replaceChildren(h('p', { class: 'muted' }, err.message));
+    }
+  }
+
+  function renderCup() {
+    const b = Cup.data && Cup.data.board;
+    if (!b) return $('#cupBody').replaceChildren(h('p', { class: 'muted' }, 'No tournament right now. Check back soon!'));
+    const t = b.tournament;
+    const when = t.active ? `⏳ ${cupLeft(t.endsInMs)} left` : t.upcoming ? `starts in ${cupLeft(t.startsInMs)}` : 'finished';
+    const others = (Cup.data.tournaments || []).filter((x) => x.id !== t.id).slice(0, 4);
+    let you;
+    if (b.you) you = h('div', { class: 'cup-you' }, 'You: ', h('b', {}, `#${b.you.rank}`), ` · ${b.you.score} pts · ${b.you.matches} match${b.you.matches === 1 ? '' : 'es'}`);
+    else if (!b.canCompete && S.me && S.me.ageGroup === 'kid') you = h('div', { class: 'cup-you dim' }, 'Kids accounts aren’t shown on public leaderboards.');
+    else you = h('div', { class: 'cup-you dim' }, S.me && S.me.robloxName ? 'Play Storm Royale matches on Roblox to get on the board!' : 'Link your Roblox account (profile) so your matches count, or play Thunder Battle on a linked Neoblox account.');
+    const rows = Cup.tab === 'players'
+      ? (b.players.length
+        ? b.players.map((p) => h('div', { class: `cup-row${p.you ? ' me' : ''}` }, h('span', { class: 'r' }, `#${p.rank}`), h('span', { class: 'n' }, `${(p.surfaces || []).map((x) => CUP_BADGE[x] || '').join('')} ${p.name}`), h('span', { class: 'm' }, `${p.matches} played`), h('span', { class: 'p' }, String(p.score))))
+        : [h('p', { class: 'muted' }, 'Nobody has scored yet. Be the first!')])
+      : (b.teams.length
+        ? b.teams.map((x) => h('div', { class: `cup-row${x.you ? ' me' : ''}` }, h('span', { class: 'r' }, `#${x.rank}`), h('span', { class: 'n' }, `${x.crossPlatform ? '🌐 ' : ''}${x.members.join(' + ')}`), h('span', { class: 'm' }, `${x.matches} played`), h('span', { class: 'p' }, String(x.score))))
+        : [h('p', { class: 'muted' }, 'No squad has scored yet. Results earned in a cross-play squad of 2+ count for the squad.')]);
+    $('#cupBody').replaceChildren(
+      h('div', { class: 'cup-head' }, h('b', {}, t.name), h('span', { class: 'muted' }, when)),
+      others.length ? h('div', { class: 'cup-others' }, others.map((o) => h('button', { class: 'btn tiny ghost', type: 'button', onclick: () => loadCup(o.id) }, `${o.name}${o.active ? '' : o.upcoming ? ' (soon)' : ' (ended)'}`))) : null,
+      h('p', { class: 'hint' }, `${b.scoring.text}. Roblox matches and Neoblox Thunder Battle rounds both count; a linked account adds them into one score.`),
+      you,
+      h('div', { class: 'room-pick cup-tabs' },
+        h('button', { type: 'button', class: Cup.tab === 'players' ? 'active' : '', onclick: () => { Cup.tab = 'players'; renderCup(); } }, `PLAYERS (${b.totalPlayers})`),
+        h('button', { type: 'button', class: Cup.tab === 'teams' ? 'active' : '', onclick: () => { Cup.tab = 'teams'; renderCup(); } }, `SQUADS (${b.totalTeams})`)),
+      h('div', { class: 'cup-list' }, rows),
+    );
+  }
+
+  $('#openCup').addEventListener('click', () => {
+    $('#cupModal').showModal();
+    loadCup(Cup.id);
+    clearInterval(Cup.timer);
+    Cup.timer = setInterval(() => loadCup(Cup.id), 15000);
+  });
+  $('#cupModal').addEventListener('close', () => { clearInterval(Cup.timer); Cup.timer = null; });
+
   // ---------------------------------------------------------------- boot
   (async function boot() {
     const q = new URLSearchParams(location.search);

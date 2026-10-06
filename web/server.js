@@ -12,6 +12,7 @@ const parentRoutes = require('./lib/parents');
 const avatarRoutes = require('./lib/avatar');
 const mparadiseRoutes = require('./lib/mparadise');
 const makeCrossplay = require('./lib/crossplay');
+const makeTournaments = require('./lib/tournaments');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ADMINS = String(process.env.ADMIN_EMAILS || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
@@ -52,9 +53,11 @@ parents = parentRoutes({ rt, publicUrl });
 // same rule realtime.js uses for its own chat.
 const crossplaySafetyOff = !moderation.enabled && process.env.NODE_ENV === 'production';
 const crossplay = makeCrossplay({ moderate: moderation.moderate, safetyOff: crossplaySafetyOff });
+// Cross-platform tournaments (Roblox game + Neoblox results on one leaderboard). See lib/tournaments.js.
+const tournaments = makeTournaments({ crossplay, moderate: moderation.moderate });
 app.use(parents.router);
 app.use(avatarRoutes());
-app.use(mparadiseRoutes(rt, crossplay));
+app.use(mparadiseRoutes(rt, crossplay, tournaments));
 
 const baseUrl = (req) => process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
 
@@ -356,6 +359,41 @@ app.post('/api/crossplay/chat', needUser(async (req, res, user) => crossReply(re
 // Poll: refresh presence (name) and return the live squad view, or { inSquad:false }.
 app.get('/api/crossplay/state', needUser(async (req, res, user) => res.json(crossplay.state(crossKey(user), { name: user.name, restricted: { isKid: auth.ageGroup(user) === 'kid' } }))));
 
+// ------------------------------------------------------------------ tournaments
+// Public: anyone can look at a leaderboard; signed in, you also get your own rank.
+const viewerKey = async (req) => {
+  const user = await currentUser(req).catch(() => null);
+  const e = tournaments.entrantForUser(user);
+  return e ? e.key : null;
+};
+app.get('/api/tournaments', async (req, res) => {
+  try {
+    res.json(await tournaments.current(await viewerKey(req)));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+app.get('/api/tournaments/:id', async (req, res) => {
+  try {
+    const b = await tournaments.board(req.params.id, await viewerKey(req));
+    if (!b) return res.status(404).json({ error: 'No such tournament' });
+    res.json(b);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+app.get('/api/admin/tournaments', needAdmin(async (req, res) => res.json({ tournaments: await tournaments.list() })));
+app.post('/api/admin/tournaments', needAdmin(async (req, res) => {
+  const r = await tournaments.create(req.body || {});
+  res.status(r.error ? 400 : 200).json(r);
+}));
+app.post('/api/admin/tournaments/:id/delete', needAdmin(async (req, res) => {
+  const r = await tournaments.remove(req.params.id);
+  res.status(r.error ? 400 : 200).json(r);
+}));
+
 // ------------------------------------------------------------------ admin
 app.get('/api/admin/reports', needAdmin(async (req, res) => {
   const reports = await db.listReports(req.query.status === 'closed' ? 'closed' : 'open');
@@ -393,7 +431,7 @@ app.post('/api/admin/reports/:id', needAdmin(async (req, res) => {
 }));
 
 // ------------------------------------------------------------------ game + pages
-app.use('/api/game', gameRoutes(rt, crossplay));
+app.use('/api/game', gameRoutes(rt, crossplay, tournaments));
 app.get('/health', (req, res) => res.json({ ok: true, db: db.kind, moderation: moderation.enabled ? moderation.model : 'off', ...rt.stats(), ...crossplay.stats() }));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));

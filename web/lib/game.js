@@ -16,7 +16,7 @@ function keyOk(given) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-module.exports = function gameRoutes(rt, crossplay) {
+module.exports = function gameRoutes(rt, crossplay, tournaments) {
   const r = express.Router();
 
   r.use((req, res, next) => {
@@ -106,7 +106,25 @@ module.exports = function gameRoutes(rt, crossplay) {
     if (crossplay && crossplay.inSquad(`roblox:${u.robloxId}`)) {
       crossplay.reportResult(`roblox:${u.robloxId}`, { kills, placement, won: req.body.won === true || placement === 1 });
     }
-    res.json({ ok: true });
+    // ...and on the tournament leaderboard (size = players in the match, bots included)
+    let tournament = null;
+    if (tournaments) {
+      try {
+        tournament = await tournaments.record(tournaments.entrantForUser(u), {
+          surface: 'roblox', squadKey: `roblox:${u.robloxId}`, kills, placement, size: req.body.size, won: req.body.won === true || placement === 1,
+        });
+      } catch (err) {
+        console.warn('[tournaments] record failed:', err.message);
+      }
+    }
+    res.json({ ok: true, tournament });
+  });
+
+  // The tournament board for the in-game panel (the game filters every name before showing it).
+  r.post('/tournament', async (req, res) => {
+    if (!tournaments) return res.json({ tournaments: [], board: null });
+    const e = await tournaments.entrantForRoblox(req.body?.robloxId);
+    res.json(await tournaments.current(e ? e.key : null));
   });
 
   // ---- cross-play squads (the Roblox game drives these for its players; the game server already

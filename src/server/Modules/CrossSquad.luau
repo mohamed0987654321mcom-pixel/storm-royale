@@ -13,6 +13,10 @@
 --     send is filtered by Roblox before it ever leaves the game
 --
 -- Client requests arrive through Remotes ("Squad", action, arg); the view goes back as Net "Squad".
+--
+-- Also the TOURNAMENT board (Remotes "Cup" → Net "Cup"): the website keeps one leaderboard for the
+-- game and for players elsewhere. Every name on it (and an admin-typed event name) is filtered with
+-- Roblox's strictest broadcast filter before it's shown; players elsewhere just show as 🌐.
 
 local Players = game:GetService("Players")
 local TextService = game:GetService("TextService")
@@ -35,6 +39,8 @@ local refreshing: { [Player]: boolean } = {}
 local lastAction: { [Player]: number } = {}
 local canChat: { [Player]: boolean } = {}
 local filtered: { [string]: string | false } = {} -- "<key>:<viewerId>" -> filtered text (false = hidden)
+local boardNames: { [string]: string | false } = {} -- raw name -> broadcast-filtered (false = hidden)
+local lastCup: { [Player]: number } = {}
 
 -------------------------------------------------------------------------------
 -- Roblox text rules
@@ -278,6 +284,100 @@ function CrossSquad.action(plr: Player, action: any, arg: any)
 end
 
 -------------------------------------------------------------------------------
+-- tournament board
+-------------------------------------------------------------------------------
+
+-- Leaderboard text is the same for everyone, so it gets Roblox's broadcast filter (the strictest)
+-- once per name and is cached; the asking player stands in as the author for text from elsewhere.
+local function boardSafe(raw: any, author: number): string?
+	if type(raw) ~= "string" or raw == "" then
+		return nil
+	end
+	local hit = boardNames[raw]
+	if hit ~= nil then
+		return hit or nil
+	end
+	local ok, res = pcall(function()
+		local r = TextService:FilterStringAsync(raw, author, Enum.TextFilterContext.PublicChat)
+		return r:GetNonChatStringForBroadcastAsync()
+	end)
+	if not ok or type(res) ~= "string" then
+		return nil -- couldn't filter right now: try again next time
+	end
+	boardNames[raw] = res ~= "" and res or false
+	return res ~= "" and res or nil
+end
+
+local function badges(surfaces: any): string
+	local roblox, other = false, false
+	for _, s in (type(surfaces) == "table" and surfaces or {}) do
+		if s == "roblox" then
+			roblox = true
+		else
+			other = true
+		end
+	end
+	return (roblox and "🧱" or "") .. (other and "🌐" or "")
+end
+
+function CrossSquad.cup(plr: Player)
+	if not WebLink.enabled() then
+		return
+	end
+	local now = os.clock()
+	if now - (lastCup[plr] or -1e9) < 8 then
+		return
+	end
+	lastCup[plr] = now
+	local data = WebLink.request("/api/game/tournament", { robloxId = plr.UserId })
+	local b = type(data) == "table" and data.board or nil
+	if type(b) ~= "table" or type(b.tournament) ~= "table" then
+		Net:FireClient(plr, "Cup", { None = true })
+		return
+	end
+	local me = plr.UserId
+	local players = {}
+	for i, p in (type(b.players) == "table" and b.players or {}) do
+		if i > 10 then
+			break
+		end
+		if type(p) == "table" then
+			table.insert(players, { Rank = tonumber(p.rank) or i, Name = boardSafe(p.name, me) or "Player", Score = tonumber(p.score) or 0, Badges = badges(p.surfaces), You = p.you == true })
+		end
+	end
+	local teams = {}
+	for i, x in (type(b.teams) == "table" and b.teams or {}) do
+		if i > 5 then
+			break
+		end
+		if type(x) == "table" then
+			local names = {}
+			for _, n in (type(x.members) == "table" and x.members or {}) do
+				table.insert(names, boardSafe(n, me) or "Player")
+			end
+			table.insert(teams, { Rank = tonumber(x.rank) or i, Members = table.concat(names, " + "), Score = tonumber(x.score) or 0, Cross = x.crossPlatform == true, You = x.you == true })
+		end
+	end
+	local t = b.tournament
+	local you = nil
+	if type(b.you) == "table" then
+		you = { Rank = tonumber(b.you.rank) or 0, Score = tonumber(b.you.score) or 0, Matches = tonumber(b.you.matches) or 0 }
+	end
+	Net:FireClient(plr, "Cup", {
+		Name = boardSafe(t.name, me) or "Tournament",
+		Active = t.active == true,
+		Upcoming = t.upcoming == true,
+		EndsIn = math.floor((tonumber(t.endsInMs) or 0) / 1000),
+		StartsIn = math.floor((tonumber(t.startsInMs) or 0) / 1000),
+		Scoring = type(b.scoring) == "table" and type(b.scoring.text) == "string" and b.scoring.text or "",
+		TotalPlayers = tonumber(b.totalPlayers) or #players,
+		Players = players,
+		Teams = teams,
+		You = you,
+	})
+end
+
+-------------------------------------------------------------------------------
 
 function CrossSquad.start()
 	if not WebLink.enabled() then
@@ -292,6 +392,7 @@ function CrossSquad.start()
 			end
 			if os.clock() - lastClear > 600 then
 				table.clear(filtered)
+				table.clear(boardNames)
 				lastClear = os.clock()
 			end
 		end
@@ -307,7 +408,7 @@ end
 
 Players.PlayerRemoving:Connect(function(plr)
 	local was = inSquad[plr]
-	inSquad[plr], refreshing[plr], lastAction[plr], canChat[plr] = nil, nil, nil, nil
+	inSquad[plr], refreshing[plr], lastAction[plr], canChat[plr], lastCup[plr] = nil, nil, nil, nil, nil
 	if was then
 		task.spawn(WebLink.request, "/api/game/crossplay/leave", { robloxId = plr.UserId })
 	end

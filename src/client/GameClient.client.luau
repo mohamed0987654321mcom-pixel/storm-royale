@@ -12,6 +12,7 @@
 --   Events     server messages and screen changes
 --   Cursor     the Storm Royale mouse cursor
 --   Squad      cross-play squad panel on the lobby page (driven by Events)
+--   Cup        tournament leaderboard panel on the lobby page (driven by Events)
 
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")

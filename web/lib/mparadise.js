@@ -43,7 +43,7 @@ async function callNeoblox(path, body) {
   return data;
 }
 
-module.exports = function mparadiseRoutes(rt, crossplay) {
+module.exports = function mparadiseRoutes(rt, crossplay, tournaments) {
   const r = express.Router();
 
   const needUser = (handler) => async (req, res) => {
@@ -142,6 +142,27 @@ module.exports = function mparadiseRoutes(rt, crossplay) {
     r.post('/api/mparadise/party/state', (req, res) => {
       const b = req.body || {};
       res.json(crossplay.state(nbKey(b), { name: b.name, restricted: b.restricted || null, status: b.status }));
+    });
+  }
+
+  // ---- tournaments: Neoblox's server reports Thunder Battle round results (it runs the rounds and
+  // counts the kills itself) and fetches the board for its players.
+  if (tournaments) {
+    r.use('/api/mparadise/tournament', (req, res, next) => (keyOk(req.get('x-mparadise-key')) ? next() : res.status(401).json({ error: 'bad key' })));
+
+    r.post('/api/mparadise/tournament/result', async (req, res) => {
+      const b = req.body || {};
+      const entrant = await tournaments.entrantForNeoblox({ neobloxId: b.neobloxId, name: b.name, restricted: b.restricted });
+      res.json(await tournaments.record(entrant, {
+        surface: 'neoblox', squadKey: `neoblox:${String(b.neobloxId || '')}`, kills: b.kills, placement: b.placement, size: b.size, won: b.won === true,
+      }));
+    });
+
+    r.post('/api/mparadise/tournament', async (req, res) => {
+      const b = req.body || {};
+      const e = b.neobloxId ? await tournaments.entrantForNeoblox({ neobloxId: b.neobloxId, restricted: b.restricted }, { forBoard: false }) : null;
+      if (b.id) return res.json({ tournaments: await tournaments.list(), board: await tournaments.board(b.id, e ? e.key : null) });
+      res.json(await tournaments.current(e ? e.key : null));
     });
   }
 

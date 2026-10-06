@@ -26,6 +26,18 @@
     </div>
     <p class="muted" id="empty" hidden>No reports here. 🎉</p>
     <div id="reports" class="reports"></div>
+
+    <div class="panel-head cup-admin-head">
+      <h2>TOURNAMENTS</h2>
+    </div>
+    <p class="muted">The Weekly Storm Cup runs by itself every week (Monday to Monday, UTC). Add special events here: results count in every tournament that's running at the time.</p>
+    <form class="cup-form" id="cupForm">
+      <input id="cupName" maxlength="40" placeholder="Event name, e.g. Friday Night Cup" required>
+      <label>Starts <input type="datetime-local" id="cupStart" required></label>
+      <label>Ends <input type="datetime-local" id="cupEnd" required></label>
+      <button class="btn yellow">CREATE</button>
+    </form>
+    <div id="cupList" class="reports"></div>
   </main>
   <div class="toasts" id="toasts"></div>
   <script src="/admin.js"></script>

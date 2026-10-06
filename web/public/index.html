@@ -101,6 +101,7 @@
       </div>
       <p class="hint" id="partyHint">In a party, chat and voice switch to just your squad.</p>
       <button class="btn squad-open" id="openSquad" type="button" hidden>🌐 CROSS-PLAY SQUAD</button>
+      <button class="btn squad-open cup-open" id="openCup" type="button">🏆 TOURNAMENT</button>
       <a class="style-link" href="/locker">
         <span class="big-emoji">🎨</span>
         <span><b>MY STYLE</b><br><span class="muted">Dress up with the Roblox items you own. Your look shows up in the game.</span></span>
@@ -221,6 +222,13 @@
       <p class="hint err" id="squadChatErr"></p>
     </div>
     <p class="hint">🛡️ Squad chat is checked by the same AI moderator. Kid accounts can't use cross-play squads.</p>
+  </dialog>
+
+  <!-- tournament -->
+  <dialog id="cupModal" class="card modal">
+    <button class="close" data-close>✕</button>
+    <h2>TOURNAMENT</h2>
+    <div id="cupBody"><p class="muted">Loading…</p></div>
   </dialog>
 
   <!-- rules -->

@@ -222,7 +222,8 @@ function WebLink.reportMatch(plr: Player, kills: number, placement: number, won:
 	if not apiKey then
 		return
 	end
-	task.spawn(post, "/api/game/match", { robloxId = plr.UserId, kills = kills, placement = placement, won = won })
+	-- size = everyone in the match, bots included (the tournament only gives placement bonuses with 4+)
+	task.spawn(post, "/api/game/match", { robloxId = plr.UserId, kills = kills, placement = placement, won = won, size = C.TOTAL_PLAYERS })
 end
 
 function WebLink.start()

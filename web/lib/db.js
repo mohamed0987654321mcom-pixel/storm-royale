@@ -67,6 +67,32 @@ CREATE TABLE IF NOT EXISTS friend_requests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (from_id, to_id)
 );
+-- cross-platform tournaments: timed events where match results from the Roblox game and from
+-- Neoblox count on one leaderboard (see lib/tournaments.js). auto_key makes the automatic weekly
+-- cup idempotent (one row per week, however many servers create it at once).
+CREATE TABLE IF NOT EXISTS tournaments (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  starts_at TIMESTAMPTZ NOT NULL,
+  ends_at TIMESTAMPTZ NOT NULL,
+  auto_key TEXT UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS tournament_results (
+  id SERIAL PRIMARY KEY,
+  tournament_id INT NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+  entrant_key TEXT NOT NULL,
+  entrant_name TEXT NOT NULL,
+  surface TEXT NOT NULL,
+  team_key TEXT,
+  kills INT NOT NULL,
+  placement INT NOT NULL,
+  size INT NOT NULL,
+  won BOOLEAN NOT NULL,
+  points INT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS tournament_results_t ON tournament_results (tournament_id);
 `;
 
 const FIELDS = {
@@ -145,6 +171,17 @@ function rowToRequest(r) {
     fromParentOk: r.from_parent_ok,
     toParentOk: r.to_parent_ok,
     createdAt: new Date(r.created_at),
+  };
+}
+
+function rowToTournament(r) {
+  return { id: r.id, name: r.name, startsAt: new Date(r.starts_at), endsAt: new Date(r.ends_at), autoKey: r.auto_key || null, createdAt: new Date(r.created_at) };
+}
+
+function rowToResult(r) {
+  return {
+    tournamentId: r.tournament_id, entrantKey: r.entrant_key, entrantName: r.entrant_name, surface: r.surface, teamKey: r.team_key || null,
+    kills: r.kills, placement: r.placement, size: r.size, won: r.won, points: r.points, createdAt: new Date(r.created_at),
   };
 }
 
@@ -234,6 +271,29 @@ function pgStore(url) {
         [userId, JSON.stringify(items)],
       );
     },
+    // tournaments
+    createTournament: async ({ name, startsAt, endsAt, autoKey = null }) => {
+      const r = await one(
+        'INSERT INTO tournaments (name, starts_at, ends_at, auto_key) VALUES ($1, $2, $3, $4) ON CONFLICT (auto_key) DO NOTHING RETURNING *',
+        [name, startsAt, endsAt, autoKey],
+      );
+      if (r) return rowToTournament(r);
+      return rowToTournament(await one('SELECT * FROM tournaments WHERE auto_key = $1', [autoKey]));
+    },
+    listTournaments: async ({ endedAfter }) =>
+      (await many('SELECT * FROM tournaments WHERE ends_at > $1 ORDER BY starts_at DESC LIMIT 50', [endedAfter])).map(rowToTournament),
+    findTournament: async (id) => { const r = await one('SELECT * FROM tournaments WHERE id = $1', [id]); return r ? rowToTournament(r) : null; },
+    deleteTournament: async (id) => { await pool.query('DELETE FROM tournaments WHERE id = $1', [id]); },
+    addTournamentResults: async (rows) => {
+      for (const x of rows) {
+        await pool.query(
+          'INSERT INTO tournament_results (tournament_id, entrant_key, entrant_name, surface, team_key, kills, placement, size, won, points) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+          [x.tournamentId, x.entrantKey, x.entrantName, x.surface, x.teamKey, x.kills, x.placement, x.size, x.won, x.points],
+        );
+      }
+    },
+    listTournamentResults: async (tournamentId) =>
+      (await many('SELECT * FROM tournament_results WHERE tournament_id = $1', [tournamentId])).map(rowToResult),
   };
   return store;
 }
@@ -245,6 +305,9 @@ function memoryStore() {
   let nextUser = 1;
   let nextReq = 1;
   const avatarItems = new Map(); // userId -> { items, updatedAt }
+  let tournaments = [];
+  let results = [];
+  let nextTournament = 1;
   const clone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
   const copy = (u) => (u ? { ...u, blocked: [...u.blocked], stats: { ...u.stats }, kidSettings: { ...u.kidSettings }, friends: [...u.friends], look: clone(u.look) } : null);
   const copyReq = (r) => (r ? { ...r } : null);
@@ -325,6 +388,24 @@ function memoryStore() {
       if (items === null) avatarItems.delete(userId);
       else avatarItems.set(userId, { items: clone(items), updatedAt: new Date() });
     },
+    createTournament: async ({ name, startsAt, endsAt, autoKey = null }) => {
+      const existing = autoKey && tournaments.find((t) => t.autoKey === autoKey);
+      if (existing) return { ...existing };
+      const t = { id: nextTournament++, name, startsAt: new Date(startsAt), endsAt: new Date(endsAt), autoKey, createdAt: new Date() };
+      tournaments.push(t);
+      return { ...t };
+    },
+    listTournaments: async ({ endedAfter }) =>
+      tournaments.filter((t) => t.endsAt > new Date(endedAfter)).sort((a, b) => b.startsAt - a.startsAt).slice(0, 50).map((t) => ({ ...t })),
+    findTournament: async (id) => { const t = tournaments.find((x) => x.id === Number(id)); return t ? { ...t } : null; },
+    deleteTournament: async (id) => {
+      tournaments = tournaments.filter((t) => t.id !== Number(id));
+      results = results.filter((r) => r.tournamentId !== Number(id));
+    },
+    addTournamentResults: async (rows) => {
+      for (const x of rows) results.push({ ...x, createdAt: new Date() });
+    },
+    listTournamentResults: async (tournamentId) => results.filter((r) => r.tournamentId === Number(tournamentId)).map((r) => ({ ...r })),
   };
 }
 

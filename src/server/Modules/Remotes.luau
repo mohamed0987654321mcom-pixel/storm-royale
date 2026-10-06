@@ -223,6 +223,11 @@ Handlers.Squad = function(plr: Player, action, arg)
 	CrossSquad.action(plr, action, arg)
 end
 
+-- the tournament board (see CrossSquad.cup)
+Handlers.Cup = function(plr: Player)
+	CrossSquad.cup(plr)
+end
+
 Players.PlayerRemoving:Connect(function(plr)
 	saving[plr], nextLook[plr], invBuf[plr], lastUpload[plr] = nil, nil, nil, nil
 end)

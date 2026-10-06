@@ -16,6 +16,37 @@
     setTimeout(() => el.remove(), 4000);
   }
 
+  // ---- tournaments (special events; the weekly cup runs by itself)
+  async function loadCups() {
+    const r = await fetch('/api/admin/tournaments');
+    if (!r.ok) return;
+    const { tournaments } = await r.json();
+    $('#cupList').replaceChildren(
+      ...tournaments.map((t) =>
+        h('div', { class: 'report' },
+          h('div', {}, h('b', {}, t.name), ` · ${new Date(t.startsAt).toLocaleString()} → ${new Date(t.endsAt).toLocaleString()} · ${t.active ? 'RUNNING' : t.upcoming ? 'upcoming' : 'ended'}`),
+          t.weekly ? h('span', { class: 'muted' }, 'automatic')
+            : h('button', { class: 'btn tiny danger', type: 'button', onclick: async () => {
+              if (!confirm(`Delete "${t.name}" and its results?`)) return;
+              const d = await fetch(`/api/admin/tournaments/${t.id}/delete`, { method: 'POST' });
+              if (!d.ok) return toast((await d.json()).error || 'Failed', true);
+              toast('Deleted');
+              loadCups();
+            } }, 'DELETE'))),
+    );
+  }
+  $('#cupForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = { name: $('#cupName').value, startsAt: new Date($('#cupStart').value).toISOString(), endsAt: new Date($('#cupEnd').value).toISOString() };
+    const r = await fetch('/api/admin/tournaments', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return toast(d.error || 'Failed', true);
+    toast(`Created ${d.tournament.name}`);
+    $('#cupForm').reset();
+    loadCups();
+  });
+  loadCups();
+
   let status = 'open';
 
   async function act(report, action, hours) {

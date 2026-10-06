@@ -168,6 +168,13 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
     // Is this member currently in a squad? (used to decide whether to relay match results)
     inSquad: (key) => Boolean(squadOf(key)),
 
+    // The squad a member is in right now (for tournament team scores), or null.
+    squadInfo(key) {
+      const squad = squadOf(key);
+      if (!squad) return null;
+      return { id: squad.id, code: squad.code, memberCount: squad.members.size };
+    },
+
     create(identity) {
       const m = normMember(identity);
       if (isKid(m)) return { error: 'Squads aren’t available for kid accounts.', kid: true };
