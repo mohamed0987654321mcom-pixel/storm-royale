@@ -48,7 +48,7 @@ end
 
 local function freeCursor()
 	UIS.MouseBehavior = Enum.MouseBehavior.Default
-	UIS.MouseIconEnabled = true
+	S.ShowCursor = true -- the Cursor module draws it
 end
 
 function CameraCtl.update()
@@ -156,7 +156,7 @@ function CameraCtl.update()
 	if not Core.TOUCH then
 		local free = S.MapOpen or S.Overlay
 		UIS.MouseBehavior = free and Enum.MouseBehavior.Default or Enum.MouseBehavior.LockCenter
-		UIS.MouseIconEnabled = free
+		S.ShowCursor = free
 	end
 end
 

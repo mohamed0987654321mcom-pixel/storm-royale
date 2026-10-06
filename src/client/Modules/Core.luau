@@ -46,6 +46,7 @@ Core.S = {
 	LastJumpReq = 0,
 	GhostArgs = nil :: any,
 	ShrinkSeen = 0,
+	ShowCursor = true, -- should a mouse cursor show right now? (the Cursor module draws it)
 	-- MY STYLE 3D studio camera (orbit around your character in the lobby)
 	Studio = { On = false, Yaw = 0, Pitch = 0.08, Dist = 11, FocusY = 3, Spin = false, BlendUntil = 0, LastT = 0 },
 }

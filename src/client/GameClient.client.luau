@@ -10,6 +10,7 @@
 --   StormFX    storm wall + purple tint
 --   CameraCtl  lobby / shoulder / bus / spectate cameras
 --   Events     server messages and screen changes
+--   Cursor     the Storm Royale mouse cursor
 
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
@@ -24,6 +25,7 @@ local Input = require(Modules.Input)
 local StormFX = require(Modules.StormFX)
 local CameraCtl = require(Modules.CameraCtl)
 local Events = require(Modules.Events)
+local Cursor = require(Modules.Cursor)
 local S, State = Core.S, Core.State
 
 pcall(function()
@@ -34,6 +36,7 @@ end)
 
 Input.start()
 Events.start()
+Cursor.start()
 
 RunService:BindToRenderStep("StormRoyale", Enum.RenderPriority.Camera.Value + 1, function(dt)
 	local now = workspace:GetServerTimeNow()
