@@ -62,6 +62,9 @@ local leaveBtn = button(inView, "LEAVE", UDim2.new(0, 74, 0, 28), UDim2.new(1, -
 local launchBar = new("Frame", { Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 0, 34), BackgroundColor3 = Color3.fromRGB(90, 70, 0), Visible = false }, inView)
 corner(launchBar, 6)
 text(launchBar, "🚀 LAUNCHED! PRESS PLAY", UDim2.fromScale(1, 1), UDim2.new(), FONT_H, 18, YELLOW)
+-- a squadmate is playing in another server: same server = same match
+local followBtn = button(inView, "↗ JOIN THEIR SERVER", UDim2.new(1, 0, 0, 26), UDim2.new(0, 0, 0, 34), Color3.fromRGB(30, 140, 90), WHITE, 18)
+followBtn.Visible = false
 local rows = new("Frame", { Size = UDim2.new(1, 0, 0, 132), Position = UDim2.new(0, 0, 0, 64), BackgroundTransparency = 1 }, inView)
 local readyBtn = button(inView, "READY UP", UDim2.new(0.5, -3, 0, 36), UDim2.new(0, 0, 0, 200), BLUE, WHITE, 20)
 local launchBtn = button(inView, "🚀 LAUNCH", UDim2.new(0.5, -3, 0, 36), UDim2.new(0.5, 3, 0, 200), YELLOW, DARK, 20)
@@ -91,7 +94,8 @@ local function render()
 		return
 	end
 	codeL.Text = "CODE  " .. tostring(v.Code)
-	launchBar.Visible = (tonumber(v.Launch) or 0) > 0
+	followBtn.Visible = v.Follow == true
+	launchBar.Visible = not followBtn.Visible and (tonumber(v.Launch) or 0) > 0
 
 	rows:ClearAllChildren()
 	new("UIListLayout", { Padding = UDim.new(0, 0) }, rows)
@@ -100,7 +104,7 @@ local function render()
 		local label = (m.Roblox and "🧱 " or "🌐 ") .. (m.Leader and "👑 " or "") .. tostring(m.Name) .. (m.You and " (you)" or "")
 		local n = text(r, label, UDim2.new(0.62, 0, 1, 0), UDim2.new(), FONT_B, 15, m.You and YELLOW or WHITE, Enum.TextXAlignment.Left)
 		n.TextTruncate = Enum.TextTruncate.AtEnd
-		text(r, (m.Ready and "✅ " or "") .. tostring(m.Status), UDim2.new(0.38, 0, 1, 0), UDim2.new(0.62, 0, 0, 0), FONT_M, 12, SOFT, Enum.TextXAlignment.Right)
+		text(r, (m.Ready and "✅ " or "") .. (m.Elsewhere and "↗ other server" or tostring(m.Status)), UDim2.new(0.38, 0, 1, 0), UDim2.new(0.62, 0, 0, 0), FONT_M, 12, SOFT, Enum.TextXAlignment.Right)
 	end
 
 	local me = myRow()
@@ -144,6 +148,9 @@ codeBox.FocusLost:Connect(function(enter)
 end)
 leaveBtn.MouseButton1Click:Connect(function()
 	send("leave")
+end)
+followBtn.MouseButton1Click:Connect(function()
+	send("follow")
 end)
 readyBtn.MouseButton1Click:Connect(function()
 	local me = myRow()

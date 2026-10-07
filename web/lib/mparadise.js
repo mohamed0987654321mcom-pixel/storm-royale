@@ -20,6 +20,8 @@ const crypto = require('crypto');
 const express = require('express');
 const db = require('./db');
 const auth = require('./auth');
+const looks = require('./looks');
+const place = require('./place');
 
 const NEOBLOX_URL = process.env.NEOBLOX_URL || 'https://neoblox.mparadiseplatrforms.com';
 
@@ -145,6 +147,37 @@ module.exports = function mparadiseRoutes(rt, crossplay, tournaments) {
     });
   }
 
+  // ---- play on Roblox: a Neoblox player opens Storm Royale on Roblox (their Neoblox account is
+  // linked to a Storm Royale account, which is linked to their Roblox account), wearing their
+  // Neoblox look, and — if they're in a cross-play squad — straight into that squad (the game reads
+  // the squad code from the launch link and moves them to their Roblox squadmates' server).
+  r.use('/api/mparadise/play', (req, res, next) => (keyOk(req.get('x-mparadise-key')) ? next() : res.status(401).json({ error: 'bad key' })));
+  r.post('/api/mparadise/play', async (req, res) => {
+    const b = req.body || {};
+    const neobloxId = String(b.neobloxId || '');
+    const user = neobloxId ? await db.findUserByNeoblox(neobloxId) : null;
+    if (!user) return res.status(400).json({ code: 'not_linked', error: 'Link your Storm Royale account first (Account → Link Storm Royale account).' });
+    if (!user.robloxId) return res.status(400).json({ code: 'no_roblox', error: 'Your Storm Royale account isn\u2019t linked to Roblox yet. On the Storm Royale website open your profile → ROBLOX ACCOUNT → link it, then try again.' });
+    const placeId = await place.get();
+    if (!placeId) return res.status(503).json({ code: 'no_place', error: 'Storm Royale hasn\u2019t been opened on Roblox since the update. Play it on Roblox once (or try again in a minute).' });
+    let wearing = false;
+    const look = neobloxLook(b.look);
+    if (look) {
+      await db.updateUser(user.id, { look, lookVer: Date.now() }); // the game picks it up on its next heartbeat
+      await rt.refreshUser(user.id);
+      wearing = true;
+    }
+    const sq = crossplay ? crossplay.squadInfo(`neoblox:${neobloxId}`) : null;
+    res.json({
+      ok: true,
+      url: place.launchUrl(placeId, sq ? `sq:${sq.code}` : ''),
+      placeId,
+      robloxName: user.robloxName || null,
+      wearingLook: wearing,
+      squad: sq ? sq.code : null,
+    });
+  });
+
   // ---- tournaments: Neoblox's server reports Thunder Battle round results (it runs the rounds and
   // counts the kills itself) and fetches the board for its players.
   if (tournaments) {
@@ -168,6 +201,25 @@ module.exports = function mparadiseRoutes(rt, crossplay, tournaments) {
 
   return r;
 };
+
+// A Neoblox avatar as a Storm Royale look: Neoblox's blocky character is skin-colored head and arms,
+// an outfit-colored torso and trim-colored legs — the same six parts Roblox colors. No items, and the
+// classic blocky body, so it looks like the Neoblox character. (Neoblox's 3D skins and uploaded .glb
+// avatars can't come along: Roblox can only use assets that are uploaded to Roblox.)
+function neobloxLook(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const hex = (v) => (/^#?[0-9a-f]{6}$/i.test(String(v || '')) ? `#${String(v).replace('#', '').toLowerCase()}` : null);
+  const skin = hex(raw.skin);
+  const shirt = hex(raw.shirt);
+  const pants = hex(raw.pants);
+  if (!skin && !shirt && !pants) return null;
+  const colors = {};
+  if (skin) Object.assign(colors, { head: skin, leftArm: skin, rightArm: skin });
+  if (shirt) colors.torso = shirt;
+  if (pants) Object.assign(colors, { leftLeg: pants, rightLeg: pants });
+  return looks.sanitizeLook({ items: [], colors, scales: {}, blocky: true }).look;
+}
+module.exports.neobloxLook = neobloxLook;
 
 // Called from lib/game.js's existing /sync heartbeat (every ~10s per online Roblox player) when
 // a linked player's in-game Coins total has changed. Fire-and-forget: if Neoblox or the network

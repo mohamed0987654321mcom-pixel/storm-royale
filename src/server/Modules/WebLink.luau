@@ -200,7 +200,8 @@ local function syncOnce()
 	if #list == 0 then
 		return
 	end
-	local data = post("/api/game/sync", { players = list })
+	-- placeId: lets the website build "open Storm Royale on Roblox" links without anyone typing it in
+	local data = post("/api/game/sync", { players = list, placeId = game.PlaceId })
 	if not data or type(data.players) ~= "table" then
 		return
 	end

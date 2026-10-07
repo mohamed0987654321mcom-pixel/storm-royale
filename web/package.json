@@ -8,7 +8,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node server.js",
-    "test": "node test/smoke.js && node test/tournaments.js"
+    "test": "node test/smoke.js && node test/tournaments.js && node test/play-on-roblox.js"
   },
   "dependencies": {
     "express": "^5.2.1",

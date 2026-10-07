@@ -140,7 +140,8 @@ function Avatar.sanitize(raw: any): any
 		local v = type(raw.scales) == "table" and tonumber(raw.scales[k]) or nil
 		scales[k] = v and math.round(math.clamp(v, r[1], r[2]) * 100) / 100 or r[3]
 	end
-	return { items = items, colors = colors, scales = scales }
+	-- blocky: the classic blocky body instead of the account's own body parts (a Neoblox look)
+	return { items = items, colors = colors, scales = scales, blocky = raw.blocky == true or nil }
 end
 
 function Avatar.sanitizeInventory(raw: any): { any }
@@ -226,6 +227,11 @@ function Avatar.describe(plr: Player, look: any): HumanoidDescription
 	local d = desc :: any
 	-- clothes and accessories come only from the look
 	d.Shirt, d.Pants, d.GraphicTShirt = 0, 0, 0
+	-- a blocky look (e.g. someone's Neoblox character) wears the classic blocky body instead of the
+	-- account's own body parts; body-part items in the look still win below
+	if look.blocky then
+		d.Head, d.Torso, d.LeftArm, d.RightArm, d.LeftLeg, d.RightLeg = 0, 0, 0, 0, 0, 0
+	end
 	local accessories = {}
 	for _, it in look.items do
 		local def = TYPES[it.type]

@@ -117,7 +117,9 @@ function sanitizeLook(raw, { owned } = {}) {
     const v = Number(raw?.scales?.[k]);
     scales[k] = Number.isFinite(v) ? Math.round(Math.min(r.max, Math.max(r.min, v)) * 100) / 100 : r.def;
   }
-  return { look: { items, colors, scales }, dropped };
+  // blocky: wear the classic blocky Roblox body instead of the account's own body parts (a
+  // Neoblox look brought into the game is a blocky, colored character)
+  return { look: { items, colors, scales, ...(raw?.blocky === true ? { blocky: true } : {}) }, dropped };
 }
 
 /** Owned-items list sent by the game (read with the player's permission). */

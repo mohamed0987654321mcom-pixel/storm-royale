@@ -65,6 +65,15 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
     return code;
   }
 
+  // Where a Roblox member is playing: the place and the exact server (JobId). The Roblox game uses
+  // the server to move squadmates into the same match; the other surfaces only get the place, to
+  // build an "open Storm Royale on Roblox" link.
+  const validPlace = (v) => {
+    const n = Number(v);
+    return Number.isSafeInteger(n) && n > 0 ? n : null;
+  };
+  const validJob = (v) => (typeof v === 'string' && /^[0-9a-f-]{8,64}$/i.test(v) ? v : null);
+
   // Build a member record from a caller-supplied identity. `restricted` carries the kid-safety
   // flags we already propagate over MPARADISE ({ isKid, allowChat, ... }); absent = not a kid.
   function normMember(m) {
@@ -80,6 +89,8 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
       ready: false,
       result: null,
       lastSeen: Date.now(),
+      placeId: surface === 'roblox' ? validPlace(m.placeId) : null,
+      jobId: surface === 'roblox' ? validJob(m.jobId) : null,
     };
   }
 
@@ -113,8 +124,9 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
   }
   setInterval(sweep, 15000).unref();
 
-  // A squad member record seen by everyone (no internal fields leaked).
-  function viewMember(squad, m) {
+  // A squad member record seen by everyone (no internal fields leaked). Only a Roblox viewer (the
+  // game server) gets a Roblox member's exact server, which it needs to move squadmates together.
+  function viewMember(squad, m, robloxViewer) {
     return {
       key: m.key,
       surface: m.surface,
@@ -123,7 +135,17 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
       ready: m.ready,
       leader: squad.leaderKey === m.key,
       result: m.result,
+      ...(robloxViewer && m.surface === 'roblox' ? { placeId: m.placeId, jobId: m.jobId } : {}),
     };
+  }
+
+  // The Roblox place this squad's Roblox players are in (most recently seen), or null.
+  function robloxPlace(squad) {
+    let best = null;
+    for (const m of squad.members.values()) {
+      if (m.surface === 'roblox' && m.placeId && (!best || m.lastSeen > best.lastSeen)) best = m;
+    }
+    return best ? { placeId: best.placeId } : null;
   }
 
   function launchActive(squad) {
@@ -132,7 +154,8 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
 
   // The full squad view for one member (what their client renders). `key` = who's asking.
   function view(squad, key) {
-    const members = [...squad.members.values()].map((m) => ({ ...viewMember(squad, m), isYou: m.key === key }));
+    const robloxViewer = String(key).startsWith('roblox:');
+    const members = [...squad.members.values()].map((m) => ({ ...viewMember(squad, m, robloxViewer), isYou: m.key === key }));
     const results = members.filter((m) => m.result).map((m) => ({ name: m.name, surface: m.surface, ...m.result }));
     return {
       inSquad: true,
@@ -144,6 +167,7 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
       chat: squad.chat.slice(-20),
       launch: launchActive(squad),
       results,
+      roblox: robloxPlace(squad), // someone in the squad is playing on Roblox (for "play with them")
     };
   }
 
@@ -158,6 +182,10 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
       if (patch.name) m.name = String(patch.name).slice(0, 24) || m.name;
       if (patch.restricted) m.restricted = patch.restricted;
       if (typeof patch.status === 'string') m.status = patch.status.slice(0, 40);
+      if (m.surface === 'roblox') {
+        if (validPlace(patch.placeId)) m.placeId = validPlace(patch.placeId);
+        if (validJob(patch.jobId)) m.jobId = validJob(patch.jobId);
+      }
     }
     return { squad, m };
   }
@@ -203,6 +231,8 @@ module.exports = function makeCrossplay({ moderate, safetyOff = false } = {}) {
         const ex = squad.members.get(m.key);
         ex.lastSeen = Date.now();
         ex.name = m.name;
+        if (m.placeId) ex.placeId = m.placeId; // e.g. they just moved to a squadmate's server
+        if (m.jobId) ex.jobId = m.jobId;
       }
       return { ok: true, code: squad.code, squad: view(squad, m.key) };
     },

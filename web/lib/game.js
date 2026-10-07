@@ -5,6 +5,7 @@ const db = require('./db');
 const auth = require('./auth');
 const looks = require('./looks');
 const mparadise = require('./mparadise');
+const place = require('./place');
 
 const STATUSES = new Set(['Lobby', 'Warm-up', 'On the bus', 'In match', 'Spectating']);
 
@@ -32,6 +33,8 @@ module.exports = function gameRoutes(rt, crossplay, tournaments) {
   // website and, for linked players, forwards it on to Neoblox — see mparadise.js's comment on
   // why that's a safe thing to do on every heartbeat with no reconciliation needed.
   r.post('/sync', async (req, res) => {
+    // the game tells us its own place id (that's how "open Storm Royale on Roblox" links know it)
+    if (req.body?.placeId) place.learn(req.body.placeId);
     const list = Array.isArray(req.body?.players) ? req.body.players.slice(0, 60) : [];
     const ids = list.map((p) => Number(p.robloxId)).filter((n) => Number.isSafeInteger(n) && n > 0);
     const users = ids.length ? await db.findUsersByRoblox(ids) : [];
@@ -143,7 +146,7 @@ module.exports = function gameRoutes(rt, crossplay, tournaments) {
           restricted = { isKid: auth.ageGroup(u) === 'kid' };
         }
       }
-      return { surface: 'roblox', id: String(robloxId), name: name || 'Roblox player', restricted };
+      return { surface: 'roblox', id: String(robloxId), name: name || 'Roblox player', restricted, placeId: body.placeId, jobId: body.jobId };
     };
     const rbKey = (body) => `roblox:${Number(body.robloxId)}`;
     const reply = (res, result) => (result.error ? res.status(result.kid ? 403 : 400).json(result) : res.json(result));
@@ -157,7 +160,7 @@ module.exports = function gameRoutes(rt, crossplay, tournaments) {
     // Poll: the game sends each squad member's live status (Lobby / In match / …) and gets the squad back.
     r.post('/crossplay/state', (req, res) => {
       const b = req.body || {};
-      res.json(crossplay.state(rbKey(b), { name: b.name, status: b.status }));
+      res.json(crossplay.state(rbKey(b), { name: b.name, status: b.status, placeId: b.placeId, jobId: b.jobId }));
     });
   }
 

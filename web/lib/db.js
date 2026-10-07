@@ -93,6 +93,11 @@ CREATE TABLE IF NOT EXISTS tournament_results (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS tournament_results_t ON tournament_results (tournament_id);
+-- small settings learned at runtime (e.g. the game's Roblox place id, reported by the game itself)
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 const FIELDS = {
@@ -294,6 +299,10 @@ function pgStore(url) {
     },
     listTournamentResults: async (tournamentId) =>
       (await many('SELECT * FROM tournament_results WHERE tournament_id = $1', [tournamentId])).map(rowToResult),
+    getSetting: async (key) => { const r = await one('SELECT value FROM settings WHERE key = $1', [key]); return r ? r.value : null; },
+    setSetting: async (key, value) => {
+      await pool.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [key, String(value)]);
+    },
   };
   return store;
 }
@@ -308,6 +317,7 @@ function memoryStore() {
   let tournaments = [];
   let results = [];
   let nextTournament = 1;
+  const settings = new Map();
   const clone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
   const copy = (u) => (u ? { ...u, blocked: [...u.blocked], stats: { ...u.stats }, kidSettings: { ...u.kidSettings }, friends: [...u.friends], look: clone(u.look) } : null);
   const copyReq = (r) => (r ? { ...r } : null);
@@ -406,6 +416,8 @@ function memoryStore() {
       for (const x of rows) results.push({ ...x, createdAt: new Date() });
     },
     listTournamentResults: async (tournamentId) => results.filter((r) => r.tournamentId === Number(tournamentId)).map((r) => ({ ...r })),
+    getSetting: async (key) => (settings.has(key) ? settings.get(key) : null),
+    setSetting: async (key, value) => { settings.set(key, String(value)); },
   };
 }
 

@@ -765,6 +765,11 @@
           : h('div', { class: 'msg' }, h('span', { class: 'who' }, `${SURFACE[c.surface]?.emoji || ''} ${c.name}`), c.text)),
     );
     $('#squadChat').scrollTop = $('#squadChat').scrollHeight;
+    // someone in the squad is on Roblox: open the game straight into this squad (and their server)
+    const placeId = d.roblox && d.roblox.placeId;
+    $('#squadRobloxLink').hidden = !placeId;
+    $('#squadRobloxHint').hidden = !placeId;
+    if (placeId) $('#squadRobloxLink').href = `https://www.roblox.com/games/start?placeId=${encodeURIComponent(placeId)}&launchData=${encodeURIComponent(`sq:${d.code}`)}`;
   }
 
   $('#squadCreate').addEventListener('click', async () => {

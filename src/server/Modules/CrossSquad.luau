@@ -14,6 +14,11 @@
 --
 -- Client requests arrive through Remotes ("Squad", action, arg); the view goes back as Net "Squad".
 --
+-- Playing TOGETHER: one Roblox server is one match, so squadmates play together by being in the same
+-- server. Each Roblox member reports its place + server (JobId); "JOIN THEIR SERVER" (and arriving
+-- from an "open Storm Royale" link, which carries "sq:<code>" as launch data) moves you there with
+-- TeleportService. That's how someone coming from the website or Neoblox ends up in the same match.
+--
 -- Also the TOURNAMENT board (Remotes "Cup" → Net "Cup"): the website keeps one leaderboard for the
 -- game and for players elsewhere. Every name on it (and an admin-typed event name) is filtered with
 -- Roblox's strictest broadcast filter before it's shown; players elsewhere just show as 🌐.
@@ -21,6 +26,7 @@
 local Players = game:GetService("Players")
 local TextService = game:GetService("TextService")
 local TextChatService = game:GetService("TextChatService")
+local TeleportService = game:GetService("TeleportService")
 
 local Core = require(script.Parent.Core)
 local WebLink = require(script.Parent.WebLink)
@@ -32,7 +38,7 @@ local POLL = 4 -- seconds between refreshes while in a squad
 local CHAT_LINES = 8
 local STATUS = { Menu = "Lobby", Warmup = "Warm-up", Bus = "On the bus", Match = "In match", Dead = "Spectating" }
 local KNOWN_STATUS = { Lobby = true, ["Warm-up"] = true, ["On the bus"] = true, ["In match"] = true, Spectating = true }
-local ACTIONS = { create = true, join = true, leave = true, ready = true, launch = true, chat = true }
+local ACTIONS = { create = true, join = true, leave = true, ready = true, launch = true, chat = true, follow = true }
 
 local inSquad: { [Player]: boolean } = {}
 local refreshing: { [Player]: boolean } = {}
@@ -134,6 +140,31 @@ end
 -- view for the client
 -------------------------------------------------------------------------------
 
+-- Where to go to play with your squad: nowhere if a Roblox squadmate is already in this server;
+-- otherwise the leader's server (if the leader is on Roblox), else the first Roblox squadmate's.
+local function followTarget(v: any): string?
+	if type(v) ~= "table" or type(v.members) ~= "table" then
+		return nil
+	end
+	local here, leader, first = false, nil, nil
+	for _, m in v.members do
+		if type(m) == "table" and m.isYou ~= true and surfaceOf(m.key) == "roblox" and type(m.jobId) == "string" and m.jobId ~= "" and tonumber(m.placeId) == game.PlaceId then
+			if m.jobId == game.JobId then
+				here = true
+			else
+				first = first or m.jobId
+				if m.leader == true then
+					leader = m.jobId
+				end
+			end
+		end
+	end
+	if here then
+		return nil
+	end
+	return leader or first
+end
+
 local function buildView(plr: Player, v: any): { [string]: any }
 	if type(v) ~= "table" or v.inSquad ~= true then
 		return { InSquad = false, CanChat = chatAllowed(plr) }
@@ -148,6 +179,7 @@ local function buildView(plr: Player, v: any): { [string]: any }
 				Ready = m.ready == true,
 				Leader = m.leader == true,
 				You = m.isYou == true,
+				Elsewhere = m.isYou ~= true and surfaceOf(m.key) == "roblox" and type(m.jobId) == "string" and m.jobId ~= "" and m.jobId ~= game.JobId,
 			})
 		end
 	end
@@ -183,6 +215,7 @@ local function buildView(plr: Player, v: any): { [string]: any }
 		Chat = chat,
 		Launch = type(v.launch) == "table" and (tonumber(v.launch.at) or 0) or 0,
 		CanChat = chatAllowed(plr),
+		Follow = followTarget(v) ~= nil, -- a Roblox squadmate is in another server: show JOIN THEIR SERVER
 	}
 end
 
@@ -196,7 +229,8 @@ local function push(plr: Player, v: any)
 end
 
 local function body(plr: Player): { [string]: any }
-	return { robloxId = plr.UserId, name = plr.Name, status = STATUS[plr:GetAttribute("Mode") or "Menu"] or "Lobby" }
+	-- placeId + jobId: where this player is, so squadmates can come to this server
+	return { robloxId = plr.UserId, name = plr.Name, status = STATUS[plr:GetAttribute("Mode") or "Menu"] or "Lobby", placeId = game.PlaceId, jobId = game.JobId }
 end
 
 local function refresh(plr: Player)
@@ -209,6 +243,62 @@ local function refresh(plr: Player)
 		push(plr, data)
 	end
 	refreshing[plr] = nil
+end
+
+-------------------------------------------------------------------------------
+-- playing together: same server = same match
+-------------------------------------------------------------------------------
+
+local function teleportTo(plr: Player, jobId: string, code: string?)
+	if plr:GetAttribute("Mode") ~= "Menu" then
+		Core.toast(plr, "Finish your match first, then join your squad's server.")
+		return
+	end
+	Core.toast(plr, "👥 Taking you to your squad's server…")
+	local ok, err = pcall(function()
+		local opts = Instance.new("TeleportOptions")
+		opts.ServerInstanceId = jobId
+		opts:SetTeleportData({ squad = code })
+		TeleportService:TeleportAsync(game.PlaceId, { plr }, opts)
+	end)
+	if not ok then
+		warn("[CrossSquad] teleport failed: " .. tostring(err))
+		Core.toast(plr, "Couldn't move you to your squad's server right now.")
+	end
+end
+
+TeleportService.TeleportInitFailed:Connect(function(plr: Player, result: Enum.TeleportResult)
+	Core.toast(plr, "Couldn't join your squad's server (" .. tostring(result and result.Name or "error") .. ").")
+end)
+
+-- Arriving from an "open Storm Royale" link (launch data "sq:<code>"): join that squad, then go to
+-- the squadmates' server. Anyone else (including arriving by a squad teleport): pick the squad up.
+local function onJoin(plr: Player)
+	if not plr.Parent then
+		return
+	end
+	local ok, jd = pcall(function()
+		return plr:GetJoinData()
+	end)
+	local code = ok and type(jd) == "table" and type(jd.LaunchData) == "string" and string.match(jd.LaunchData, "^sq:(%w+)$") or nil
+	if not code then
+		refresh(plr)
+		return
+	end
+	local b = body(plr)
+	b.code = string.upper(code)
+	local data, err = WebLink.request("/api/game/crossplay/join", b)
+	if err or type(data) ~= "table" then
+		Core.toast(plr, (err == nil or err == "offline" or err == "unavailable") and "Couldn't reach your squad right now." or err)
+		return
+	end
+	push(plr, data.squad or data)
+	Core.toast(plr, "👥 You're in your squad!")
+	local target = followTarget(data.squad)
+	if target then
+		task.wait(2) -- let them see they made it, then go
+		teleportTo(plr, target, b.code)
+	end
 end
 
 -------------------------------------------------------------------------------
@@ -228,6 +318,17 @@ function CrossSquad.action(plr: Player, action: any, arg: any)
 		return
 	end
 	lastAction[plr] = now
+
+	if action == "follow" then
+		local data = WebLink.request("/api/game/crossplay/state", body(plr))
+		local target = followTarget(data)
+		if not target then
+			Core.toast(plr, "You're already in your squad's server.")
+			return
+		end
+		teleportTo(plr, target, type(data) == "table" and string.match(tostring(data.code or ""), "^%w+$") or nil)
+		return
+	end
 
 	local b = body(plr)
 	if action == "join" then
@@ -399,7 +500,7 @@ function CrossSquad.start()
 	end)
 	-- someone who just rejoined may still be in their squad: pick it back up
 	Players.PlayerAdded:Connect(function(plr)
-		task.delay(3, refresh, plr)
+		task.delay(3, onJoin, plr) -- joins from a squad link, or picks an existing squad back up
 	end)
 	for _, plr in Players:GetPlayers() do
 		task.spawn(refresh, plr)
